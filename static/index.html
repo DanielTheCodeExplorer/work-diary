@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Work Diary</title>
+    <meta name="theme-color" content="#D85B56">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <header class="topbar" id="topbar">
+      <div class="topbar-top">
+        <a class="brand" href="/" aria-label="Work Diary home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M6 3h9l3 3v15H6z"></path>
+              <path d="M15 3v4h4"></path>
+              <path d="M9 11h6M9 15h6M9 19h4"></path>
+            </svg>
+          </span>
+          <span>Work Diary</span>
+        </a>
+        <div class="top-actions">
+          <button class="icon-button" type="button" id="openQuickAdd" aria-label="Quick add" title="Quick add">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M12 5v14M5 12h14"></path>
+            </svg>
+          </button>
+          <button class="icon-button" type="button" id="logoutButton" aria-label="Log out" title="Log out">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <path d="M16 17l5-5-5-5"></path>
+              <path d="M21 12H9"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <nav class="tabs" aria-label="Primary views">
+        <button class="tab active" type="button" data-view="todo">To do</button>
+        <button class="tab" type="button" data-view="diary">Diary</button>
+        <button class="tab" type="button" data-view="projects">Projects</button>
+      </nav>
+    </header>
+
+    <main class="workspace">
+      <section class="view active" id="todoView" aria-labelledby="todoHeading">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Plan first</p>
+            <h1 id="todoHeading">To do</h1>
+          </div>
+        </div>
+
+        <section class="todo-panel planner-panel" aria-label="Tasks">
+          <div class="todo-head">
+            <div>
+              <p class="eyebrow">Open work</p>
+              <h2>Planner</h2>
+            </div>
+            <span class="todo-count" id="todoCount">0 open</span>
+          </div>
+          <form class="task-form" id="taskForm">
+            <input id="taskTitle" type="text" placeholder="Add a task" autocomplete="off" required>
+            <input id="taskDueDate" type="date" aria-label="Due date">
+            <input id="taskDueTime" type="time" aria-label="Time">
+            <select id="taskPriority" aria-label="Priority">
+              <option value="">No priority</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+            <button class="primary-button" type="submit">Add</button>
+          </form>
+          <div class="task-list" id="taskList"></div>
+        </section>
+      </section>
+
+      <section class="view" id="taskDetailView" aria-labelledby="taskDetailHeading">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Planner list</p>
+            <h1 id="taskDetailHeading">Inbox</h1>
+          </div>
+          <div class="section-actions">
+            <span class="todo-count" id="taskDetailCount">0 open</span>
+            <button class="ghost-button" type="button" id="backToPlanner">Back to planner</button>
+          </div>
+        </div>
+        <div class="task-detail-list" id="taskDetailList"></div>
+      </section>
+
+      <section class="view" id="diaryView" aria-labelledby="diaryHeading">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Fast entry</p>
+            <h1 id="diaryHeading">Diary</h1>
+          </div>
+          <div class="searchbar">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="m21 21-4.3-4.3M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4z"></path>
+            </svg>
+            <input id="searchInput" type="search" placeholder="Search logs, projects, skills">
+          </div>
+        </div>
+
+        <form class="quick-strip" id="inlineQuickForm">
+          <label for="inlineQuickNote">Quick log</label>
+          <div class="quick-row">
+            <textarea id="inlineQuickNote" rows="2" placeholder="Today I worked on FastAPI authentication and fixed a bug with JWT tokens."></textarea>
+            <button class="primary-button" type="submit">Save</button>
+          </div>
+        </form>
+
+        <div class="filter-row" aria-label="Diary filters">
+          <select id="projectFilter">
+            <option value="">All projects</option>
+          </select>
+          <select id="skillFilter">
+            <option value="">All skills</option>
+          </select>
+          <select id="tagFilter">
+            <option value="">All tags</option>
+          </select>
+          <button class="ghost-button" type="button" id="clearFilters">Clear</button>
+        </div>
+
+        <div class="entry-list" id="entryList"></div>
+      </section>
+
+      <section class="view" id="projectsView" aria-labelledby="projectsHeading">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Project view</p>
+            <h1 id="projectsHeading">Projects</h1>
+          </div>
+          <div class="searchbar">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="m21 21-4.3-4.3M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4z"></path>
+            </svg>
+            <input id="projectSearchInput" type="search" placeholder="Search projects, tasks, evidence">
+          </div>
+        </div>
+        <div class="project-list" id="projectList"></div>
+      </section>
+
+    </main>
+
+    <aside class="drawer hidden" id="entryDrawer" aria-hidden="true">
+      <div class="drawer-backdrop" data-action="close-drawer"></div>
+      <section class="drawer-panel" aria-labelledby="drawerTitle">
+        <header class="drawer-head">
+          <div>
+            <p class="eyebrow" id="drawerMode">New log</p>
+            <h2 id="drawerTitle">Work entry</h2>
+          </div>
+          <button class="icon-button" type="button" data-action="close-drawer" aria-label="Close" title="Close">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M6 6l12 12M18 6 6 18"></path>
+            </svg>
+          </button>
+        </header>
+
+        <div class="mode-switch" role="tablist" aria-label="Entry mode">
+          <button class="mode active" type="button" data-mode="quick">Quick log</button>
+          <button class="mode" type="button" data-mode="task">Task</button>
+          <button class="mode" type="button" data-mode="details">Entry</button>
+        </div>
+
+        <form class="quick-form" id="drawerQuickForm">
+          <label for="drawerQuickNote">Rough note</label>
+          <textarea id="drawerQuickNote" rows="6" placeholder="Today I worked on FastAPI authentication and fixed a bug with JWT tokens."></textarea>
+          <div class="compact-grid">
+            <label>
+              Date
+              <input id="drawerQuickDate" type="date">
+            </label>
+            <label>
+              Project
+              <input id="drawerQuickProject" type="text" placeholder="Optional">
+            </label>
+          </div>
+          <button class="primary-button full-width" type="submit">Save quick log</button>
+        </form>
+
+        <form class="task-detail-form hidden" id="drawerTaskForm">
+          <label>
+            Task name
+            <input id="drawerTaskTitle" type="text" placeholder="Update CV notes" autocomplete="off" required>
+          </label>
+          <div class="compact-grid">
+            <label>
+              Date
+              <input id="drawerTaskDueDate" type="date">
+            </label>
+            <label>
+              Time
+              <input id="drawerTaskDueTime" type="time">
+            </label>
+          </div>
+          <div class="compact-grid">
+            <label>
+              Priority
+              <select id="drawerTaskPriority">
+                <option value="">No priority</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+            <label>
+              Repeat
+              <select id="drawerTaskRepeatRule">
+                <option value="none">No repeat</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </label>
+          </div>
+          <label>
+            Project or list
+            <input id="drawerTaskProject" type="text" placeholder="Final Project">
+          </label>
+          <label>
+            Location
+            <input id="drawerTaskLocation" type="text" placeholder="Library">
+          </label>
+          <label>
+            Reminder
+            <input id="drawerTaskReminder" type="datetime-local">
+          </label>
+          <label>
+            Notes
+            <textarea id="drawerTaskNotes" rows="4" placeholder="Anything useful to remember."></textarea>
+          </label>
+          <button class="primary-button full-width" type="submit">Save task</button>
+        </form>
+
+        <form class="entry-form hidden" id="entryForm">
+          <input id="entryId" type="hidden">
+          <div class="compact-grid">
+            <label>
+              Date
+              <input id="entryDate" type="date" required>
+            </label>
+            <label>
+              Difficulty
+              <select id="entryDifficulty">
+                <option value="">Not set</option>
+                <option value="easy">Easy</option>
+                <option value="medium">Medium</option>
+                <option value="hard">Hard</option>
+                <option value="stretch">Stretch</option>
+              </select>
+            </label>
+          </div>
+          <label>
+            Title
+            <input id="entryTitle" type="text" required placeholder="FastAPI authentication">
+          </label>
+          <label>
+            What I did
+            <textarea id="entryWhat" rows="5" required placeholder="Built login endpoints, fixed JWT expiry handling, and added tests."></textarea>
+          </label>
+          <label>
+            Project
+            <input id="entryProject" type="text" placeholder="Client portal">
+          </label>
+          <label>
+            Skills used
+            <input id="entrySkills" type="text" placeholder="FastAPI, JWT, Pytest">
+          </label>
+          <label>
+            Outcome
+            <textarea id="entryOutcome" rows="3" placeholder="Authentication flow now passes staging checks."></textarea>
+          </label>
+          <label>
+            Evidence
+            <div class="evidence-editor">
+              <div class="compact-grid">
+                <input id="evidenceTitle" type="text" placeholder="Evidence title">
+                <select id="evidenceType"></select>
+              </div>
+              <input id="evidenceUrl" type="url" placeholder="https://...">
+              <textarea id="evidenceDescription" rows="2" placeholder="Short description"></textarea>
+              <button class="secondary-button" type="button" id="addEvidenceToEntry">Add evidence</button>
+              <div class="mini-list" id="entryEvidenceList"></div>
+            </div>
+          </label>
+          <label>
+            Tags
+            <input id="entryTags" type="text" placeholder="backend, debugging, security">
+          </label>
+          <label>
+            Reflection notes
+            <textarea id="entryReflection" rows="3" placeholder="What I learned or would improve next time."></textarea>
+          </label>
+          <label>
+            CV bullet draft
+            <textarea id="entryBullet" rows="3" placeholder="Draft from the diary entry later."></textarea>
+          </label>
+          <div class="form-actions">
+            <button class="ghost-button danger" type="button" id="deleteEntry">Delete</button>
+            <button class="secondary-button" type="button" id="draftBullet">Draft bullet</button>
+            <button class="primary-button" type="submit">Save entry</button>
+          </div>
+        </form>
+      </section>
+    </aside>
+
+    <button class="fab" type="button" id="floatingQuickAdd" aria-label="Quick add" title="Quick add">
+      <svg viewBox="0 0 24 24" focusable="false">
+        <path d="M12 5v14M5 12h14"></path>
+      </svg>
+    </button>
+
+    <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
+
+    <script>
+      window.API_BASE_URL = "";
+    </script>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
