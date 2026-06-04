@@ -1,7 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: Work Diary serverless backend with Lambda + DynamoDB
-
 Parameters:
   AppPassword:
     Type: String
@@ -15,8 +14,7 @@ Parameters:
     Type: String
     NoEcho: true
     Description: OpenAI API key (optional; can be empty for fallback CV generation)
-    Default: ""
-
+    Default: ''
 Globals:
   Function:
     Timeout: 60
@@ -24,18 +22,25 @@ Globals:
     Runtime: python3.12
     Environment:
       Variables:
-        APP_PASSWORD: !Ref AppPassword
-        SESSION_SECRET: !Ref SessionSecret
-        OPENAI_API_KEY: !Ref OpenAIApiKey
+        APP_PASSWORD:
+          Ref: AppPassword
+        SESSION_SECRET:
+          Ref: SessionSecret
+        OPENAI_API_KEY:
+          Ref: OpenAIApiKey
         OPENAI_MODEL: gpt-5.4-nano
         OPENAI_REASONING_EFFORT: low
-        TASKS_TABLE: !Ref TasksTable
-        ENTRIES_TABLE: !Ref EntriesTable
-        EVIDENCE_TABLE: !Ref EvidenceTable
-        ACHIEVEMENTS_TABLE: !Ref AchievementsTable
-        UPLOADS_BUCKET: !Ref UploadsBucket
+        TASKS_TABLE:
+          Ref: TasksTable
+        ENTRIES_TABLE:
+          Ref: EntriesTable
+        EVIDENCE_TABLE:
+          Ref: EvidenceTable
+        ACHIEVEMENTS_TABLE:
+          Ref: AchievementsTable
+        UPLOADS_BUCKET:
+          Ref: UploadsBucket
         UPLOADS_PREFIX: uploads/
-
 Resources:
   TasksTable:
     Type: AWS::DynamoDB::Table
@@ -43,153 +48,166 @@ Resources:
       TableName: WorkDiaryTasks
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: id
-          AttributeType: S
+      - AttributeName: id
+        AttributeType: S
       KeySchema:
-        - AttributeName: id
-          KeyType: HASH
-
+      - AttributeName: id
+        KeyType: HASH
   EntriesTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: WorkDiaryEntries
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: id
-          AttributeType: S
+      - AttributeName: id
+        AttributeType: S
       KeySchema:
-        - AttributeName: id
-          KeyType: HASH
-
+      - AttributeName: id
+        KeyType: HASH
   EvidenceTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: WorkDiaryEvidence
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: id
-          AttributeType: S
+      - AttributeName: id
+        AttributeType: S
       KeySchema:
-        - AttributeName: id
-          KeyType: HASH
-
+      - AttributeName: id
+        KeyType: HASH
   AchievementsTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: WorkDiaryAchievements
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: id
-          AttributeType: S
+      - AttributeName: id
+        AttributeType: S
       KeySchema:
-        - AttributeName: id
-          KeyType: HASH
-
+      - AttributeName: id
+        KeyType: HASH
   UploadsBucket:
     Type: AWS::S3::Bucket
     Properties:
       BucketEncryption:
         ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
-
   WorkDiaryLambdaRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: DynamoDBAccess
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - dynamodb:GetItem
-                  - dynamodb:PutItem
-                  - dynamodb:UpdateItem
-                  - dynamodb:DeleteItem
-                  - dynamodb:Scan
-                  - dynamodb:Query
-                Resource:
-                  - !GetAtt TasksTable.Arn
-                  - !GetAtt EntriesTable.Arn
-                  - !GetAtt EvidenceTable.Arn
-                  - !GetAtt AchievementsTable.Arn
-              - Effect: Allow
-                Action:
-                  - s3:PutObject
-                  - s3:GetObject
-                  - s3:DeleteObject
-                Resource:
-                  - !Sub '${UploadsBucket.Arn}/uploads/*'
-
+      - PolicyName: DynamoDBAccess
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:Scan
+            - dynamodb:Query
+            Resource:
+            - Fn::GetAtt:
+              - TasksTable
+              - Arn
+            - Fn::GetAtt:
+              - EntriesTable
+              - Arn
+            - Fn::GetAtt:
+              - EvidenceTable
+              - Arn
+            - Fn::GetAtt:
+              - AchievementsTable
+              - Arn
+          - Effect: Allow
+            Action:
+            - s3:PutObject
+            - s3:GetObject
+            - s3:DeleteObject
+            Resource:
+            - Fn::Sub: ${UploadsBucket.Arn}/uploads/*
   WorkDiaryFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: WorkDiaryAPI
-      CodeUri: .
+      CodeUri: WorkDiaryFunction
       Handler: lambda_backend.lambda_handler
-      Role: !GetAtt WorkDiaryLambdaRole.Arn
+      Role:
+        Fn::GetAtt:
+        - WorkDiaryLambdaRole
+        - Arn
       Events:
         ApiEvent:
           Type: HttpApi
           Properties:
-            ApiId: !Ref WorkDiaryApi
+            ApiId:
+              Ref: WorkDiaryApi
             Path: /{proxy+}
             Method: ANY
         RootEvent:
           Type: HttpApi
           Properties:
-            ApiId: !Ref WorkDiaryApi
+            ApiId:
+              Ref: WorkDiaryApi
             Path: /
             Method: ANY
-
+    Metadata:
+      SamResourceId: WorkDiaryFunction
   WorkDiaryApi:
     Type: AWS::Serverless::HttpApi
     Properties:
       Name: WorkDiaryAPI
       CorsConfiguration:
         AllowMethods:
-          - GET
-          - POST
-          - PUT
-          - DELETE
-          - OPTIONS
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - OPTIONS
         AllowHeaders:
-          - Content-Type
-          - Authorization
+        - Content-Type
+        - Authorization
         AllowOrigins:
-          - '*'
-
+        - '*'
 Outputs:
   ApiEndpoint:
     Description: API Gateway endpoint URL
-    Value: !Sub 'https://${WorkDiaryApi}.execute-api.${AWS::Region}.amazonaws.com'
+    Value:
+      Fn::Sub: https://${WorkDiaryApi}.execute-api.${AWS::Region}.amazonaws.com
   TasksTableName:
     Description: DynamoDB Tasks table name
-    Value: !Ref TasksTable
+    Value:
+      Ref: TasksTable
   EntriesTableName:
     Description: DynamoDB Entries table name
-    Value: !Ref EntriesTable
+    Value:
+      Ref: EntriesTable
   EvidenceTableName:
     Description: DynamoDB Evidence table name
-    Value: !Ref EvidenceTable
+    Value:
+      Ref: EvidenceTable
   AchievementsTableName:
     Description: DynamoDB Achievements table name
-    Value: !Ref AchievementsTable
+    Value:
+      Ref: AchievementsTable
   UploadsBucketName:
     Description: S3 bucket for uploaded image evidence
-    Value: !Ref UploadsBucket
+    Value:
+      Ref: UploadsBucket
