@@ -35,6 +35,8 @@ When prompted:
 3. Parameters:
    - AppPassword: use your private login password
    - SessionSecret: generate a private value with `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`
+   - McpOwnerPassword: use a separate password for approving the private ChatGPT connection
+   - McpSigningSecret: generate a separate value with `python3 -c 'import secrets; print(secrets.token_urlsafe(48))'`
    - OpenAIApiKey: paste your OpenAI API key, or leave blank for the free deterministic fallback
    - VapidPublicKey: paste your Web Push VAPID public key, or leave blank until enabling phone reminders
    - VapidPrivateKey: paste your Web Push VAPID private key, or leave blank until enabling phone reminders
@@ -45,6 +47,9 @@ When prompted:
    - AppFrontendUrl: use your CloudFront frontend URL
 4. Confirm changes: **y**
 5. Allow SAM to create IAM roles: **y**
+
+After deployment, the private ChatGPT MCP URL is the `ApiEndpoint` output with
+`/mcp` appended. See `MCP_INTEGRATION.md` for the Developer Mode connection flow.
 
 For later deploys, keep using the same stack:
 
