@@ -343,6 +343,7 @@ function renderGoogleIntegration() {
   const disconnectButton = $("#disconnectGoogle");
   const retryButton = $("#retryGoogleSync");
   const failedCount = Number(status.failed_task_count || 0);
+  const setupReady = Boolean(status.ready);
 
   if (!status.configured) {
     setGoogleStatus("Google sync is not configured on the server yet.");
@@ -355,6 +356,7 @@ function renderGoogleIntegration() {
   if (!status.connected) {
     setGoogleStatus("Google is not connected. Connect once; future task changes sync automatically.");
     if (connectButton) {
+      connectButton.textContent = "Connect Google";
       connectButton.disabled = false;
       connectButton.classList.remove("hidden");
     }
@@ -363,13 +365,41 @@ function renderGoogleIntegration() {
     return;
   }
 
+  if (status.needs_reauthorization) {
+    setGoogleStatus("Reconnect Google once to allow tasks to sync to My Tasks.");
+    if (connectButton) {
+      connectButton.textContent = "Reconnect Google";
+      connectButton.disabled = false;
+      connectButton.classList.remove("hidden");
+    }
+    if (disconnectButton) disconnectButton.disabled = false;
+    if (retryButton) retryButton.classList.add("hidden");
+    return;
+  }
+
+  if (!setupReady) {
+    const error = status.last_error ? ` ${status.last_error}` : "";
+    setGoogleStatus(`Google authorization succeeded, but setup is incomplete.${error}`);
+    if (connectButton) connectButton.classList.add("hidden");
+    if (disconnectButton) disconnectButton.disabled = false;
+    if (retryButton) {
+      retryButton.textContent = "Finish Google setup";
+      retryButton.classList.remove("hidden");
+    }
+    return;
+  }
+
   const lastSync = status.last_sync_at ? ` Last sync: ${formatSyncDateTime(status.last_sync_at)}.` : "";
   const error = status.last_error ? ` Error: ${status.last_error}` : "";
   const failed = failedCount ? ` ${failedCount} task${failedCount === 1 ? "" : "s"} need retry.` : "";
-  setGoogleStatus(`Google is connected. Dated tasks go to Calendar; undated tasks go to Google Tasks.${lastSync}${failed}${error}`);
-  if (connectButton) connectButton.classList.add("hidden");
+  setGoogleStatus(`Google is connected. All tasks go to My Tasks; Google displays dated tasks on its Tasks calendar.${lastSync}${failed}${error}`);
+  if (connectButton) {
+    connectButton.textContent = "Connect Google";
+    connectButton.classList.add("hidden");
+  }
   if (disconnectButton) disconnectButton.disabled = false;
   if (retryButton) {
+    retryButton.textContent = "Retry failed sync";
     retryButton.classList.toggle("hidden", failedCount === 0);
   }
 }
@@ -1660,6 +1690,9 @@ function googleSyncChip(task) {
   }
   if (task.google_sync_target === "calendar_event" && task.google_synced_at) {
     return `<span class="task-chip">Google Calendar</span>`;
+  }
+  if (task.google_sync_target === "calendar_and_task" && task.google_synced_at) {
+    return `<span class="task-chip">Calendar + Tasks</span>`;
   }
   if (task.google_sync_target === "google_task" && task.google_synced_at) {
     return `<span class="task-chip">Google Tasks</span>`;

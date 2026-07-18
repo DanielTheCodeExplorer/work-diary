@@ -41,9 +41,10 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3"
 GOOGLE_TASKS_API_BASE = "https://tasks.googleapis.com/tasks/v1"
 GOOGLE_SCOPES = [
-    "https://www.googleapis.com/auth/calendar.app.created",
     "https://www.googleapis.com/auth/tasks",
 ]
+GOOGLE_PRIMARY_CALENDAR_ID = "primary"
+GOOGLE_DEFAULT_TASKLIST_ID = "@default"
 DEFAULT_OPENAI_MODEL = "gpt-5.4-nano"
 MAX_IMAGE_UPLOAD_BYTES = 3 * 1024 * 1024
 MAX_ACHIEVEMENT_BULLETS = 10
@@ -524,9 +525,19 @@ def google_failed_task_count() -> int:
 def google_status() -> Dict[str, Any]:
     config = read_google_config()
     integration = get_google_integration()
+    connected = google_is_connected(integration)
+    granted_scopes = set(compact_text(integration.get("scope")).split())
+    needs_reauthorization = connected and not set(GOOGLE_SCOPES).issubset(granted_scopes)
+    ready = bool(
+        connected
+        and not needs_reauthorization
+        and compact_text(integration.get("tasklist_id")) == GOOGLE_DEFAULT_TASKLIST_ID
+    )
     return {
         "configured": google_client_is_configured(config),
-        "connected": google_is_connected(integration),
+        "connected": connected,
+        "ready": ready,
+        "needs_reauthorization": needs_reauthorization,
         "calendar_id": integration.get("calendar_id", ""),
         "tasklist_id": integration.get("tasklist_id", ""),
         "last_sync_at": integration.get("last_sync_at", ""),
@@ -629,43 +640,25 @@ def google_api(method: str, url: str, body: Optional[Dict[str, Any]] = None) -> 
 
 def ensure_google_calendar(integration: Dict[str, Any]) -> str:
     calendar_id = compact_text(integration.get("calendar_id"))
-    if calendar_id:
+    if calendar_id == GOOGLE_PRIMARY_CALENDAR_ID:
         return calendar_id
-    payload = google_api(
-        "POST",
-        f"{GOOGLE_CALENDAR_API_BASE}/calendars",
-        {
-            "summary": "Work Diary",
-            "description": "Tasks synced automatically from Work Diary.",
-            "timeZone": REMINDER_TIMEZONE,
-        },
+    save_google_integration(
+        {"calendar_id": GOOGLE_PRIMARY_CALENDAR_ID, "last_error": ""}
     )
-    calendar_id = compact_text(payload.get("id"))
-    if not calendar_id:
-        raise GoogleIntegrationError("Google did not return a Calendar ID.")
-    save_google_integration({"calendar_id": calendar_id, "last_error": ""})
-    return calendar_id
+    return GOOGLE_PRIMARY_CALENDAR_ID
 
 
 def ensure_google_tasklist(integration: Dict[str, Any]) -> str:
     tasklist_id = compact_text(integration.get("tasklist_id"))
-    if tasklist_id:
+    if tasklist_id == GOOGLE_DEFAULT_TASKLIST_ID:
         return tasklist_id
-    payload = google_api(
-        "POST",
-        f"{GOOGLE_TASKS_API_BASE}/users/@me/lists",
-        {"title": "Work Diary"},
+    save_google_integration(
+        {"tasklist_id": GOOGLE_DEFAULT_TASKLIST_ID, "last_error": ""}
     )
-    tasklist_id = compact_text(payload.get("id"))
-    if not tasklist_id:
-        raise GoogleIntegrationError("Google did not return a Task List ID.")
-    save_google_integration({"tasklist_id": tasklist_id, "last_error": ""})
-    return tasklist_id
+    return GOOGLE_DEFAULT_TASKLIST_ID
 
 
 def ensure_google_destinations() -> Dict[str, Any]:
-    integration = get_google_integration()
-    ensure_google_calendar(integration)
     integration = get_google_integration()
     ensure_google_tasklist(integration)
     return get_google_integration()
@@ -691,7 +684,7 @@ def google_callback_html(message: str, return_url: str = "/") -> Dict[str, Any]:
   <meta charset=\"utf-8\">
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
   <meta http-equiv=\"refresh\" content=\"1; url={safe_url}\">
-  <title>Google connected</title>
+  <title>Work Diary Google connection</title>
   <style>body{{font-family:system-ui,-apple-system,sans-serif;margin:2rem;line-height:1.5;background:#111;color:#f5f5f5}}a{{color:#5DD4C0}}</style>
 </head>
 <body>
@@ -749,13 +742,45 @@ def complete_google_connect(query: Dict[str, str]) -> Dict[str, Any]:
             "last_error": "",
         }
     )
-    ensure_google_destinations()
+    try:
+        ensure_google_destinations()
+    except GoogleIntegrationError:
+        logger.warning("Google destination setup failed after OAuth", exc_info=True)
+        save_google_integration(
+            {
+                "last_error": (
+                    "Google authorization succeeded, but setup is incomplete. "
+                    "Enable the Google Tasks API, then finish setup."
+                )
+            }
+        )
+        return google_callback_html(
+            "Google authorization succeeded, but setup is incomplete.", return_url
+        )
     retry_google_sync(include_all=True)
+    save_google_integration({"last_error": ""})
     return google_callback_html("Google connected.", return_url)
 
 
+def retry_google_connection() -> Dict[str, Any]:
+    try:
+        ensure_google_destinations()
+    except GoogleIntegrationError:
+        save_google_integration(
+            {
+                "last_error": (
+                    "Google setup is incomplete. Enable the Google Tasks API, then try again."
+                )
+            }
+        )
+        raise
+    result = retry_google_sync(include_all=True)
+    save_google_integration({"last_error": ""})
+    return {**result, "status": google_status()}
+
+
 def google_task_sync_target(task: Dict[str, Any]) -> str:
-    return "calendar_event" if compact_text(task.get("due_date") or task.get("start_date")) else "google_task"
+    return "google_task"
 
 
 def google_task_hash(task: Dict[str, Any]) -> str:
@@ -839,6 +864,9 @@ def google_task_body(task: Dict[str, Any]) -> Dict[str, Any]:
     }
     if task.get("completed"):
         body["completed"] = compact_text(task.get("completed_at")) or now_iso()
+    task_date = compact_text(task.get("due_date") or task.get("start_date"))
+    if task_date:
+        body["due"] = f"{task_date}T00:00:00.000Z"
     return body
 
 
@@ -847,14 +875,18 @@ def save_task_google_sync_state(
     *,
     target: str,
     sync_hash: str,
-    calendar_event_id: str = "",
-    calendar_event_link: str = "",
-    google_task_id: str = "",
-    google_task_link: str = "",
+    calendar_event_id: Optional[str] = None,
+    calendar_event_link: Optional[str] = None,
+    google_task_id: Optional[str] = None,
+    google_task_link: Optional[str] = None,
     error: str = "",
 ) -> None:
     task = get_task(str(task_id))
     timestamp = now_iso()
+    calendar_event_id = task.get("google_calendar_event_id", "") if calendar_event_id is None else calendar_event_id
+    calendar_event_link = task.get("google_calendar_event_link", "") if calendar_event_link is None else calendar_event_link
+    google_task_id = task.get("google_task_id", "") if google_task_id is None else google_task_id
+    google_task_link = task.get("google_task_link", "") if google_task_link is None else google_task_link
     task.update(
         {
             "google_sync_target": compact_text(target),
@@ -931,7 +963,13 @@ def cleanup_previous_google_target(previous: Dict[str, Any], current_target: str
 def sync_calendar_event_for_task(task: Dict[str, Any], sync_hash: str) -> None:
     if task.get("completed"):
         delete_google_calendar_event(task)
-        save_task_google_sync_state(task["id"], target="calendar_event", sync_hash=sync_hash)
+        save_task_google_sync_state(
+            task["id"],
+            target="calendar_and_task",
+            sync_hash=sync_hash,
+            calendar_event_id="",
+            calendar_event_link="",
+        )
         return
     calendar_id = ensure_google_calendar(get_google_integration())
     event_id = google_calendar_event_id_for_task(task)
@@ -956,19 +994,21 @@ def sync_calendar_event_for_task(task: Dict[str, Any], sync_hash: str) -> None:
         )
     save_task_google_sync_state(
         task["id"],
-        target="calendar_event",
+        target="calendar_and_task",
         sync_hash=sync_hash,
         calendar_event_id=event_id,
         calendar_event_link=compact_text(payload.get("htmlLink")),
     )
 
 
-def sync_google_task_for_task(task: Dict[str, Any], sync_hash: str) -> None:
+def sync_google_task_for_task(
+    task: Dict[str, Any], sync_hash: str, *, target: str = "google_task"
+) -> None:
     tasklist_id = ensure_google_tasklist(get_google_integration())
     body = google_task_body(task)
     google_task_id = compact_text(task.get("google_task_id"))
     if task.get("completed") and not google_task_id:
-        save_task_google_sync_state(task["id"], target="google_task", sync_hash=sync_hash)
+        save_task_google_sync_state(task["id"], target=target, sync_hash=sync_hash)
         return
     if google_task_id:
         try:
@@ -993,7 +1033,7 @@ def sync_google_task_for_task(task: Dict[str, Any], sync_hash: str) -> None:
         )
     save_task_google_sync_state(
         task["id"],
-        target="google_task",
+        target=target,
         sync_hash=sync_hash,
         google_task_id=compact_text(payload.get("id")),
         google_task_link=compact_text(payload.get("webViewLink")),
@@ -1011,19 +1051,17 @@ def sync_task_to_google(task: Dict[str, Any], previous: Optional[Dict[str, Any]]
         and compact_text(task.get("google_sync_target")) == target
     ):
         return
-    target_changed = False
-    if previous:
-        previous_target = compact_text(previous.get("google_sync_target")) or google_task_sync_target(previous)
-        target_changed = previous_target != target
-        cleanup_previous_google_target(previous, target)
-    if target == "calendar_event":
-        if not target_changed and compact_text(task.get("google_task_id")):
-            delete_google_task(task)
-        sync_calendar_event_for_task(task, sync_hash)
-    else:
-        if not target_changed and compact_text(task.get("google_calendar_event_id")):
-            delete_google_calendar_event(task)
-        sync_google_task_for_task(task, sync_hash)
+    if compact_text(task.get("google_calendar_event_id")):
+        delete_google_calendar_event(task)
+        save_task_google_sync_state(
+            task["id"],
+            target="google_task",
+            sync_hash=sync_hash,
+            calendar_event_id="",
+            calendar_event_link="",
+        )
+        task = get_task(str(task["id"]))
+    sync_google_task_for_task(task, sync_hash, target="google_task")
 
 
 def auto_sync_task_after_save(
@@ -1040,9 +1078,10 @@ def auto_delete_google_for_task(task: Dict[str, Any]) -> None:
     if not google_is_connected(get_google_integration()):
         return
     try:
-        if (compact_text(task.get("google_sync_target")) or google_task_sync_target(task)) == "calendar_event":
+        target = compact_text(task.get("google_sync_target")) or google_task_sync_target(task)
+        if target in {"calendar_event", "calendar_and_task"}:
             delete_google_calendar_event(task)
-        else:
+        if target in {"google_task", "calendar_and_task"}:
             delete_google_task(task)
         save_google_integration({"last_sync_at": now_iso(), "last_error": ""})
     except Exception as exc:
@@ -1083,8 +1122,6 @@ def disconnect_google() -> Dict[str, Any]:
             "refresh_token": "",
             "token_expires_at": 0,
             "scope": "",
-            "calendar_id": "",
-            "tasklist_id": "",
             "oauth_state": "",
             "oauth_state_created_at": "",
             "oauth_return_url": "",
@@ -3416,8 +3453,7 @@ def route_api(method: str, path: str, query: Dict[str, str], body: Dict[str, Any
     if method == "GET" and path == "/api/integrations/google/callback":
         return complete_google_connect(query)
     if method == "POST" and path == "/api/integrations/google/retry":
-        result = retry_google_sync(include_all=False)
-        return {**result, "status": google_status()}
+        return retry_google_connection()
     if method == "POST" and path == "/api/integrations/google/disconnect":
         return disconnect_google()
     if method == "GET" and path == "/api/achievements":
