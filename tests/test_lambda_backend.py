@@ -54,7 +54,7 @@ class LambdaBackendHelperTests(unittest.TestCase):
         self.assertNotIn("google_task_id", view)
         self.assertNotIn("google_sync_hash", view)
 
-    def test_mcp_archive_requires_completed_task_and_preserves_revision_check(self):
+    def test_mcp_archive_accepts_open_task_and_preserves_revision_check(self):
         open_task = {
             "id": "task-1",
             "title": "Still open",
@@ -68,20 +68,11 @@ class LambdaBackendHelperTests(unittest.TestCase):
             "idempotency_key": "archive-task-1",
         }
 
+        archived_task = {**open_task, "archived": True, "archived_at": "2026-07-18T10:05:00Z"}
         with unittest.mock.patch.object(
             lambda_backend, "mcp_idempotent", side_effect=lambda _name, _key, operation: operation()
         ), unittest.mock.patch.object(
             lambda_backend, "get_task", return_value=open_task
-        ):
-            with self.assertRaisesRegex(lambda_backend.ValidationError, "Only completed tasks"):
-                lambda_backend.call_mcp_tool("archive_task", arguments)
-
-        completed_task = {**open_task, "title": "Finished", "completed": True}
-        archived_task = {**completed_task, "archived": True, "archived_at": "2026-07-18T10:05:00Z"}
-        with unittest.mock.patch.object(
-            lambda_backend, "mcp_idempotent", side_effect=lambda _name, _key, operation: operation()
-        ), unittest.mock.patch.object(
-            lambda_backend, "get_task", return_value=completed_task
         ), unittest.mock.patch.object(
             lambda_backend, "update_task", return_value=archived_task
         ) as update_task:
@@ -89,6 +80,7 @@ class LambdaBackendHelperTests(unittest.TestCase):
 
         update_task.assert_called_once_with("task-1", {"archived": True})
         self.assertTrue(result["structuredContent"]["task"]["archived"])
+        self.assertFalse(result["structuredContent"]["task"]["completed"])
 
     def test_mcp_rejects_an_unauthorized_request_with_resource_metadata(self):
         event = {

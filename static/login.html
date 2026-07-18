@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-    <link rel="stylesheet" href="/static/styles.css?v=20260718-task-archive">
+    <link rel="stylesheet" href="/static/styles.css?v=20260718-archive-any-task">
   </head>
   <body class="login-body">
     <main class="login-shell">
@@ -32,12 +32,12 @@
         <p class="login-error" id="loginError" role="alert"></p>
       </section>
     </main>
-    <script src="/config.js?v=20260718-task-archive"></script>
+    <script src="/config.js?v=20260718-archive-any-task"></script>
     <script>
       window.API_BASE_URL = ["localhost", "127.0.0.1"].includes(window.location.hostname)
         ? ""
         : (window.WORK_DIARY_CONFIG?.apiBaseUrl || "");
     </script>
-    <script src="/static/login.js?v=20260718-task-archive"></script>
+    <script src="/static/login.js?v=20260718-archive-any-task"></script>
   </body>
 </html>

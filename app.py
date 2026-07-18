@@ -2416,8 +2416,6 @@ def update_task(
     if not completed:
         completed_at = ""
     archived = validate_boolean(merged.get("archived"), "Archived")
-    if archived and not completed:
-        raise ValidationError("Only completed tasks can be archived.")
     archived_at = current.get("archived_at", "")
     if archived and not current.get("archived"):
         archived_at = timestamp

@@ -1524,8 +1524,6 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             if name == "archive_task":
                 if current.get("archived"):
                     return mcp_task_view(current)
-                if not current.get("completed"):
-                    raise ValidationError("Only completed tasks can be archived. Complete the task first.")
                 return mcp_task_view(update_task(task_id, {"archived": True}))
             if name == "complete_task":
                 return mcp_task_view(update_task(task_id, {"completed": True}))
@@ -2495,8 +2493,6 @@ def update_task(task_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
     if not completed:
         completed_at = ""
     archived = validate_boolean(merged.get("archived"), "Archived")
-    if archived and not completed:
-        raise ValidationError("Only completed tasks can be archived.")
     archived_at = current.get("archived_at", "")
     if archived and not current.get("archived"):
         archived_at = timestamp

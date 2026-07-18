@@ -170,8 +170,8 @@ def tool_descriptors() -> list[Dict[str, Any]]:
         },
         {
             "name": "archive_task",
-            "title": "Archive a completed Work Diary task",
-            "description": "Use this when the user has confirmed that a completed task should leave normal planning views. This is reversible in Work Diary and does not permanently delete the task.",
+            "title": "Archive a Work Diary task",
+            "description": "Use this when the user has confirmed that an open or completed task should leave normal planning views. This is reversible in Work Diary and does not permanently delete the task.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

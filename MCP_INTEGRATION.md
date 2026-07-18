@@ -25,7 +25,7 @@ release does not provide an SSE stream.
 | `create_task` | Create a task using existing validation and Google sync | Idempotent write |
 | `complete_task` | Complete a task after checking its last-read revision | Idempotent write |
 | `reschedule_task` | Change independent start/end fields after a revision check | Idempotent write |
-| `archive_task` | Hide an already-completed task from planning views after a revision check | Reversible idempotent write |
+| `archive_task` | Hide an open or completed task from planning views after a revision check | Reversible idempotent write |
 
 Only planning fields are returned. Google access tokens, provider IDs, sync
 hashes, internal traces, and unrelated diary data are excluded.
@@ -95,9 +95,9 @@ A useful first prompt is:
 Start and end values remain independent. A start-only task does not acquire an
 end date, and an end-only task does not acquire a start date.
 
-Archiving is deliberately safer than deletion: ChatGPT can archive only tasks
-that are already complete. Archived tasks can be restored, or reviewed and
-permanently deleted from Work Diary's Archived view with an explicit
+Archiving is deliberately safer than deletion: ChatGPT can archive open or
+completed tasks, and archived tasks can be restored. They can also be reviewed
+and permanently deleted from Work Diary's Archived view with an explicit
 confirmation. The MCP integration does not expose permanent deletion.
 
 ## Current private-release boundary

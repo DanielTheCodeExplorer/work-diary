@@ -1026,22 +1026,17 @@ class WorkDiaryTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             get_task(self.conn, task["id"])
 
-    def test_completed_task_can_be_archived_and_restored(self):
+    def test_open_task_can_be_archived_and_restored(self):
         task = create_task(self.conn, {"title": "Review later"})
-
-        with self.assertRaisesRegex(ValidationError, "Only completed tasks"):
-            update_task(self.conn, task["id"], {"archived": True})
-
-        completed = update_task(self.conn, task["id"], {"completed": True})
         archived = update_task(self.conn, task["id"], {"archived": True})
 
-        self.assertTrue(archived["completed"])
+        self.assertFalse(archived["completed"])
         self.assertTrue(archived["archived"])
         self.assertTrue(archived["archived_at"])
         self.assertEqual([item["id"] for item in list_tasks(self.conn, {"archived": "true"})], [task["id"]])
         self.assertEqual(list_tasks(self.conn, {"archived": "false"}), [])
 
-        restored = update_task(self.conn, completed["id"], {"archived": False})
+        restored = update_task(self.conn, task["id"], {"archived": False})
         self.assertFalse(restored["archived"])
         self.assertEqual(restored["archived_at"], "")
 

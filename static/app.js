@@ -74,7 +74,7 @@ const on = (selector, event, handler, root = document) => {
   return element;
 };
 const API_BASE_URL = window.API_BASE_URL || "";
-const APP_ASSET_VERSION = "20260718-task-archive";
+const APP_ASSET_VERSION = "20260718-archive-any-task";
 const API_REQUEST_TIMEOUT_MS = 10000;
 const SETTINGS_KEY = "workDiarySettings";
 const HIDDEN_DASHBOARD_TASKS_KEY = "workDiaryHiddenDashboardTasks";
@@ -1717,9 +1717,7 @@ function taskActions(task) {
   if (task.archived) {
     return `<button class="link-button" type="button" data-action="restore-task">Restore</button><button class="ghost-button danger" type="button" data-action="delete-task">Delete permanently</button>`;
   }
-  const archive = task.completed
-    ? `<button class="link-button" type="button" data-action="archive-task">Archive</button>`
-    : "";
+  const archive = `<button class="link-button" type="button" data-action="archive-task">Archive</button>`;
   return `${archive}<button class="link-button" type="button" data-action="edit-task">Edit</button><button class="ghost-button danger" type="button" data-action="delete-task">Delete</button>`;
 }
 
@@ -3352,10 +3350,6 @@ async function deleteTask(taskId) {
 async function setTaskArchived(taskId, archived) {
   const task = findTask(taskId);
   if (!task) return;
-  if (archived && !task.completed) {
-    showToast("Complete the task before archiving it.");
-    return;
-  }
   await api(`/api/tasks/${task.id}`, {
     method: "PUT",
     body: { archived },
