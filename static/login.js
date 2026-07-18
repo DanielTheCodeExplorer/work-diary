@@ -2,49 +2,70 @@ const loginForm = document.querySelector("#loginForm");
 const passwordInput = document.querySelector("#passwordInput");
 const loginError = document.querySelector("#loginError");
 const API_BASE_URL = window.API_BASE_URL || "";
+const APP_ASSET_VERSION = "20260718-production-hardening";
 
-async function clearLegacyServiceWorkers() {
+function setLoginError(message) {
+  if (loginError) {
+    loginError.textContent = message;
+  }
+}
+
+async function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   try {
-    const registrations = await navigator.serviceWorker.getRegistrations();
-    await Promise.all(registrations.map((registration) => registration.unregister()));
+    await navigator.serviceWorker.register(`/service-worker.js?v=${APP_ASSET_VERSION}`);
   } catch {
-    // Ignore failures; login should still work without offline caching.
-  }
-  if (window.caches) {
-    try {
-      const keys = await caches.keys();
-      await Promise.all(keys.map((key) => caches.delete(key)));
-    } catch {
-      // Ignore failures.
-    }
+    // Ignore failures; login should still work without offline caching or push.
   }
 }
 
 async function login(event) {
   event.preventDefault();
-  loginError.textContent = "";
-
-  const response = await fetch(`${API_BASE_URL}/api/login`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      password: passwordInput.value,
-    }),
-  });
-  const payload = await response.json();
-  if (!response.ok) {
-    loginError.textContent = payload.error || "Login failed.";
-    passwordInput.select();
+  setLoginError("");
+  if (!passwordInput) {
+    setLoginError("Login form did not load correctly. Refresh the page.");
     return;
   }
-  if (payload.token) {
-    localStorage.setItem("workDiaryToken", payload.token);
+
+  const submit = loginForm?.querySelector('[type="submit"]');
+  if (submit?.disabled) return;
+  if (submit) submit.disabled = true;
+  loginForm?.setAttribute("aria-busy", "true");
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        password: passwordInput.value,
+      }),
+    });
+    const text = await response.text();
+    let payload = {};
+    try {
+      payload = text ? JSON.parse(text) : {};
+    } catch {
+      payload = {};
+    }
+    if (!response.ok) {
+      setLoginError(payload.error || "Login failed. Please try again.");
+      passwordInput.select();
+      return;
+    }
+    if (payload.token) {
+      localStorage.setItem("workDiaryToken", payload.token);
+    }
+    window.location.assign("/");
+  } catch {
+    setLoginError("The server could not be reached. Check your connection and try again.");
+  } finally {
+    if (submit) submit.disabled = false;
+    loginForm?.setAttribute("aria-busy", "false");
   }
-  window.location.assign("/");
 }
 
-clearLegacyServiceWorkers();
-loginForm.addEventListener("submit", login);
+registerServiceWorker();
+if (loginForm) {
+  loginForm.addEventListener("submit", login);
+}

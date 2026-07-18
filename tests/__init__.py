@@ -1,0 +1,1 @@
+"""Work Diary regression tests."""

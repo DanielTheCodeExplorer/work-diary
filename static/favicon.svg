@@ -1,6 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="80" fill="#1F1E1E"/>
-  <path d="M144 88h164l68 68v268H144z" fill="#F9F9F9"/>
-  <path d="M308 88v72h72" fill="#D0A39E"/>
-  <path d="M184 226h144M184 284h144M184 342h96" stroke="#D85B56" stroke-width="28" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Work Diary">
+  <rect width="512" height="512" rx="96" fill="#101515"/>
+  <rect x="48" y="48" width="416" height="416" rx="92" fill="#162020" stroke="#5DD4C0" stroke-width="14"/>
+  <path d="M136 86h184l64 64v276H136z" fill="#F7FBFA"/>
+  <path d="M320 86v68h68z" fill="#B7EEE4"/>
+  <path d="M186 194l26 124 38-76 38 76 26-124" fill="none" stroke="#122020" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M328 194v124h26c40 0 68-25 68-62s-28-62-68-62z" fill="none" stroke="#D85B56" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M190 370h132" stroke="#5DD4C0" stroke-width="24" stroke-linecap="round"/>
+  <path d="M350 356l25 25 49-58" fill="none" stroke="#5DD4C0" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

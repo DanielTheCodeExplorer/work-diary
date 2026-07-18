@@ -3,10 +3,12 @@ set -euo pipefail
 
 STACK_NAME="${STACK_NAME:-work-diary-stack}"
 API_BASE="${API_BASE:-}"
-BUCKET="${BUCKET:-work-diary-static-1780521024}"
+BUCKET="${BUCKET:-}"
 FUNCTION_NAME="${FUNCTION_NAME:-WorkDiaryAPI}"
 OUT_DIR="${OUT_DIR:-verify-$(date +%Y%m%d-%H%M%S)}"
 LOG_GROUP="${LOG_GROUP:-/aws/lambda/${FUNCTION_NAME}}"
+
+: "${BUCKET:?Set BUCKET to the frontend S3 bucket name.}"
 
 mkdir -p "$OUT_DIR"
 
@@ -26,8 +28,8 @@ fi
 
 aws lambda get-function-configuration \
   --function-name "$FUNCTION_NAME" \
-  --query 'Environment.Variables' \
-  --output json >"$OUT_DIR/lambda-env.json"
+  --query '{Runtime:Runtime,LastModified:LastModified,Timeout:Timeout,MemorySize:MemorySize,EnvironmentKeys:keys(Environment.Variables)}' \
+  --output json >"$OUT_DIR/lambda-config.json"
 
 aws s3 ls "s3://${BUCKET}" --recursive >"$OUT_DIR/s3-list.txt"
 
@@ -46,17 +48,27 @@ if [[ -n "${APP_PASSWORD:-}" && -n "$API_BASE" ]]; then
       -X POST "${API_BASE}/api/login" \
       -d "{\"password\":\"${APP_PASSWORD}\"}"
   )"
-  printf '%s\n' "$LOGIN_RESPONSE" >"$OUT_DIR/login-body.json"
-
   TOKEN="$(
-    python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("token", ""))' \
-      "$OUT_DIR/login-body.json"
+    printf '%s' "$LOGIN_RESPONSE" | \
+      python3 -c 'import json, sys; print(json.load(sys.stdin).get("token", ""))'
   )"
   if [[ -n "$TOKEN" ]]; then
-    curl -s -D "$OUT_DIR/tasks-headers.txt" \
-      -H "Authorization: Bearer ${TOKEN}" \
-      "${API_BASE}/api/tasks" \
-      -o "$OUT_DIR/tasks-body.json" || true
+    TASKS_RESPONSE="$(
+      curl -s -D "$OUT_DIR/tasks-headers.txt" \
+        -H "Authorization: Bearer ${TOKEN}" \
+        "${API_BASE}/api/tasks" || true
+    )"
+    printf '%s' "$TASKS_RESPONSE" | python3 -c '
+import json
+import sys
+
+try:
+    payload = json.load(sys.stdin)
+    count = len(payload) if isinstance(payload, list) else 0
+    print(json.dumps({"authenticated": True, "task_count": count}))
+except (ValueError, TypeError):
+    print(json.dumps({"authenticated": True, "task_count": None}))
+' >"$OUT_DIR/tasks-summary.json"
   fi
 fi
 
