@@ -11,6 +11,14 @@ Parameters:
     Type: String
     NoEcho: true
     Description: Session signing secret
+  McpOwnerPassword:
+    Type: String
+    NoEcho: true
+    Description: Separate password used only to approve the private ChatGPT MCP connection
+  McpSigningSecret:
+    Type: String
+    NoEcho: true
+    Description: Separate random secret used to sign MCP OAuth clients and tokens
   OpenAIApiKey:
     Type: String
     NoEcho: true
@@ -56,6 +64,9 @@ Globals:
       Variables:
         APP_PASSWORD: !Ref AppPassword
         SESSION_SECRET: !Ref SessionSecret
+        MCP_OWNER_PASSWORD: !Ref McpOwnerPassword
+        MCP_SIGNING_SECRET: !Ref McpSigningSecret
+        MCP_OWNER_ID: daniel
         OPENAI_API_KEY: !Ref OpenAIApiKey
         OPENAI_MODEL: gpt-5.4-nano
         OPENAI_REASONING_EFFORT: low
