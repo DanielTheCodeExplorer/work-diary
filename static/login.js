@@ -2,7 +2,7 @@ const loginForm = document.querySelector("#loginForm");
 const passwordInput = document.querySelector("#passwordInput");
 const loginError = document.querySelector("#loginError");
 const API_BASE_URL = window.API_BASE_URL || "";
-const APP_ASSET_VERSION = "20260718-responsive-networking";
+const APP_ASSET_VERSION = "20260718-timezone-init-fix";
 const API_REQUEST_TIMEOUT_MS = 10000;
 
 function setLoginError(message) {
