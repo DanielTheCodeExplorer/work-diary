@@ -1,3 +1,16 @@
+const APP_TIME_ZONE = "Europe/London";
+
+function today() {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: APP_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const value = (type) => parts.find((part) => part.type === type)?.value || "";
+  return `${value("year")}-${value("month")}-${value("day")}`;
+}
+
 const state = {
   activeView: "dashboard",
   taskBucket: "inbox",
@@ -61,7 +74,7 @@ const on = (selector, event, handler, root = document) => {
   return element;
 };
 const API_BASE_URL = window.API_BASE_URL || "";
-const APP_ASSET_VERSION = "20260718-responsive-networking";
+const APP_ASSET_VERSION = "20260718-timezone-init-fix";
 const API_REQUEST_TIMEOUT_MS = 10000;
 const SETTINGS_KEY = "workDiarySettings";
 const HIDDEN_DASHBOARD_TASKS_KEY = "workDiaryHiddenDashboardTasks";
@@ -71,7 +84,6 @@ const HIDDEN_ENTRIES_KEY = "workDiaryHiddenEntries";
 const COLLAPSED_PROJECT_RECOMMENDATIONS_KEY = "workDiaryCollapsedProjectRecommendations";
 const PLANNER_FOCUS_KEY = "workDiaryPlannerFocus";
 const PHONE_REMINDERS_KEY = "workDiaryPhoneReminders";
-const APP_TIME_ZONE = "Europe/London";
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const wheelAnimationFrames = new WeakMap();
 let pageScrollAnimationFrame = 0;
@@ -84,17 +96,6 @@ async function registerServiceWorker() {
     // Ignore failures; the app is still usable without offline caching or push.
   }
   return null;
-}
-
-function today() {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: APP_TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const value = (type) => parts.find((part) => part.type === type)?.value || "";
-  return `${value("year")}-${value("month")}-${value("day")}`;
 }
 
 function escapeHtml(value) {

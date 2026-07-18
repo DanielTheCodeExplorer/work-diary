@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-    <link rel="stylesheet" href="/static/styles.css?v=20260718-responsive-networking">
+    <link rel="stylesheet" href="/static/styles.css?v=20260718-timezone-init-fix">
   </head>
   <body>
     <header class="topbar" id="topbar">
@@ -801,12 +801,12 @@
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
 
-    <script src="/config.js?v=20260718-responsive-networking"></script>
+    <script src="/config.js?v=20260718-timezone-init-fix"></script>
     <script>
       window.API_BASE_URL = ["localhost", "127.0.0.1"].includes(window.location.hostname)
         ? ""
         : (window.WORK_DIARY_CONFIG?.apiBaseUrl || "");
     </script>
-    <script src="/static/app.js?v=20260718-responsive-networking"></script>
+    <script src="/static/app.js?v=20260718-timezone-init-fix"></script>
   </body>
 </html>

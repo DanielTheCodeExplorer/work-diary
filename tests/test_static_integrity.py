@@ -1,4 +1,5 @@
 import re
+import subprocess
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
@@ -83,6 +84,26 @@ class StaticIntegrityTests(unittest.TestCase):
         self.assertIn("API_REQUEST_TIMEOUT_MS", login_source)
         self.assertIn("new AbortController()", login_source)
         self.assertIn("controller.abort()", login_source)
+
+    def test_timezone_is_initialized_before_state_calls_today(self):
+        app_source = read_static("app.js")
+
+        timezone_index = app_source.index('const APP_TIME_ZONE = "Europe/London"')
+        today_index = app_source.index("function today()")
+        state_index = app_source.index("const state =")
+
+        self.assertLess(timezone_index, today_index)
+        self.assertLess(today_index, state_index)
+
+        runtime_prefix = app_source[: app_source.index("const $ =")]
+        result = subprocess.run(
+            ["node", "-e", f'{runtime_prefix}\nprocess.stdout.write(state.selectedDateValue);'],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout, r"^\d{4}-\d{2}-\d{2}$")
 
     def test_service_worker_prefers_cached_versioned_assets_and_times_out_network(self):
         worker_source = read_static("service-worker.js")
