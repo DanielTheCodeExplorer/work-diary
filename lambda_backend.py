@@ -3,6 +3,7 @@ import binascii
 import datetime as dt
 import hashlib
 import hmac
+import html
 import json
 import logging
 import os
@@ -20,6 +21,19 @@ import boto3
 
 from integration_security import oauth_state_is_fresh, safe_return_url
 from task_schedule import TaskSchedule, TaskScheduleValidationError
+from mcp_integration import (
+    ACCESS_TOKEN_SECONDS,
+    MCP_PROTOCOL_VERSION,
+    REFRESH_TOKEN_SECONDS,
+    jsonrpc_error,
+    jsonrpc_result,
+    oauth_server_metadata,
+    pkce_s256,
+    protected_resource_metadata,
+    sign_claims,
+    tool_descriptors,
+    verify_claims,
+)
 
 try:
     from botocore.exceptions import ClientError
@@ -53,6 +67,13 @@ PUBLIC_API_PATHS = {
     "/api/logout",
     "/api/health",
     "/api/integrations/google/callback",
+    "/.well-known/oauth-authorization-server",
+    "/.well-known/openid-configuration",
+    "/.well-known/oauth-protected-resource",
+    "/.well-known/oauth-protected-resource/mcp",
+    "/oauth/authorize",
+    "/oauth/register",
+    "/oauth/token",
 }
 EVIDENCE_TYPES = {
     "google_drive": "Google Drive link",
@@ -1189,6 +1210,320 @@ def parse_json_body(event: Dict[str, Any]) -> Dict[str, Any]:
 def parse_query(event: Dict[str, Any]) -> Dict[str, str]:
     query_string = event.get("rawQueryString", "") or ""
     return {key: values[-1] for key, values in parse_qs(query_string).items()}
+
+
+def parse_form_body(event: Dict[str, Any]) -> Dict[str, str]:
+    body = event.get("body") or ""
+    if event.get("isBase64Encoded"):
+        body = base64.b64decode(body).decode("utf-8")
+    return {key: values[-1] for key, values in parse_qs(body).items()}
+
+
+def request_origin(event: Dict[str, Any], headers: Dict[str, str]) -> str:
+    configured = compact_text(os.environ.get("MCP_SERVER_ORIGIN"))
+    if configured:
+        return configured.rstrip("/")
+    host = compact_text(headers.get("x-forwarded-host") or headers.get("host"))
+    proto = compact_text(headers.get("x-forwarded-proto")) or "https"
+    if not host:
+        raise ValidationError("MCP server origin is unavailable.")
+    return f"{proto}://{host}".rstrip("/")
+
+
+def mcp_secret() -> str:
+    secret = get_config_value("MCP_SIGNING_SECRET")
+    if not secret:
+        raise ValidationError("MCP signing is not configured.")
+    return secret
+
+
+def mcp_password_matches(submitted: Any) -> bool:
+    password = get_config_value("MCP_OWNER_PASSWORD")
+    if not password:
+        return False
+    return secrets.compare_digest(str(submitted or ""), password)
+
+
+def mcp_client_claims(client_id: str) -> Optional[Dict[str, Any]]:
+    return verify_claims(client_id, mcp_secret(), token_type="mcp_client")
+
+
+def mcp_register_client(body: Dict[str, Any]) -> Dict[str, Any]:
+    redirect_uris = body.get("redirect_uris")
+    if not isinstance(redirect_uris, list) or not redirect_uris:
+        raise ValidationError("redirect_uris is required.")
+    clean_uris = []
+    for raw_uri in redirect_uris:
+        uri = compact_text(raw_uri)
+        if not re.match(r"^https://", uri) and not re.match(r"^http://(localhost|127\.0\.0\.1)(:|/|$)", uri):
+            raise ValidationError("OAuth redirect URIs must use HTTPS or localhost.")
+        clean_uris.append(uri)
+    issued_at = int(time.time())
+    client_id = sign_claims(
+        {
+            "typ": "mcp_client",
+            "redirect_uris": clean_uris,
+            "iat": issued_at,
+            "exp": issued_at + 365 * 24 * 60 * 60,
+        },
+        mcp_secret(),
+    )
+    return {
+        "client_id": client_id,
+        "client_id_issued_at": issued_at,
+        "redirect_uris": clean_uris,
+        "token_endpoint_auth_method": "none",
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+    }
+
+
+def validate_mcp_authorize_params(params: Dict[str, str], origin: str) -> Dict[str, str]:
+    required = ["client_id", "redirect_uri", "state", "code_challenge", "resource"]
+    if any(not compact_text(params.get(key)) for key in required):
+        raise ValidationError("OAuth authorization request is incomplete.")
+    if params.get("response_type") != "code" or params.get("code_challenge_method") != "S256":
+        raise ValidationError("OAuth authorization requires code response type and S256 PKCE.")
+    client = mcp_client_claims(params["client_id"])
+    if not client or params["redirect_uri"] not in client.get("redirect_uris", []):
+        raise ValidationError("OAuth client or redirect URI is invalid.")
+    if params["resource"] != f"{origin}/mcp":
+        raise ValidationError("OAuth resource does not match this MCP server.")
+    return {key: compact_text(value) for key, value in params.items()}
+
+
+def mcp_authorize_page(params: Dict[str, str], origin: str, error: str = "") -> str:
+    values = validate_mcp_authorize_params(params, origin)
+    hidden = "".join(
+        f'<input type="hidden" name="{html.escape(key)}" value="{html.escape(value, quote=True)}">'
+        for key, value in values.items()
+        if key != "password"
+    )
+    error_html = f'<p style="color:#ff8a8a">{html.escape(error)}</p>' if error else ""
+    return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect Work Diary</title></head>
+<body style="font-family:system-ui;background:#111;color:#f5f5f5;max-width:32rem;margin:4rem auto;padding:1rem">
+<h1>Connect Work Diary</h1><p>ChatGPT is requesting access to read and update your private task list.</p>{error_html}
+<form method="post" action="/oauth/authorize">{hidden}<label>Work Diary password<br><input autofocus required type="password" name="password" style="margin-top:.5rem;padding:.7rem;width:100%;box-sizing:border-box"></label><button style="margin-top:1rem;padding:.7rem 1rem" type="submit">Allow access</button></form>
+</body></html>"""
+
+
+def mcp_issue_authorization_code(params: Dict[str, str], origin: str) -> str:
+    values = validate_mcp_authorize_params(params, origin)
+    if not mcp_password_matches(params.get("password")):
+        raise ValidationError("Incorrect password.")
+    now = int(time.time())
+    return sign_claims(
+        {
+            "typ": "mcp_code",
+            "client_id": values["client_id"],
+            "redirect_uri": values["redirect_uri"],
+            "code_challenge": values["code_challenge"],
+            "aud": values["resource"],
+            "owner": compact_text(os.environ.get("MCP_OWNER_ID")) or "owner",
+            "jti": uuid.uuid4().hex,
+            "iat": now,
+            "exp": now + 10 * 60,
+        },
+        mcp_secret(),
+    )
+
+
+def mcp_token_payload(owner: str, audience: str, *, include_refresh: bool = True) -> Dict[str, Any]:
+    now = int(time.time())
+    access_token = sign_claims(
+        {"typ": "mcp_access", "sub": owner, "aud": audience, "scope": "work_diary.tasks", "iat": now, "exp": now + ACCESS_TOKEN_SECONDS},
+        mcp_secret(),
+    )
+    payload: Dict[str, Any] = {
+        "access_token": access_token,
+        "token_type": "Bearer",
+        "expires_in": ACCESS_TOKEN_SECONDS,
+        "scope": "work_diary.tasks",
+    }
+    if include_refresh:
+        payload["refresh_token"] = sign_claims(
+            {"typ": "mcp_refresh", "sub": owner, "aud": audience, "scope": "work_diary.tasks", "iat": now, "exp": now + REFRESH_TOKEN_SECONDS},
+            mcp_secret(),
+        )
+    return payload
+
+
+def mcp_exchange_token(form: Dict[str, str], origin: str) -> Dict[str, Any]:
+    resource = compact_text(form.get("resource"))
+    expected_resource = f"{origin}/mcp"
+    if resource != expected_resource:
+        raise ValidationError("OAuth resource does not match this MCP server.")
+    if form.get("grant_type") == "authorization_code":
+        claims = verify_claims(form.get("code", ""), mcp_secret(), token_type="mcp_code", audience=resource)
+        if not claims:
+            raise ValidationError("Authorization code is invalid or expired.")
+        if form.get("client_id") != claims.get("client_id") or form.get("redirect_uri") != claims.get("redirect_uri"):
+            raise ValidationError("Authorization code client details do not match.")
+        verifier = form.get("code_verifier", "")
+        if not verifier or not hmac.compare_digest(pkce_s256(verifier), str(claims.get("code_challenge") or "")):
+            raise ValidationError("PKCE verification failed.")
+        code_key = "mcp-code-" + hashlib.sha256(form["code"].encode("utf-8")).hexdigest()
+        if google_integration_table.get_item(Key={"id": code_key}, ConsistentRead=True).get("Item"):
+            raise ValidationError("Authorization code was already used.")
+        google_integration_table.put_item(Item={"id": code_key, "used_at": now_iso(), "ttl": int(time.time()) + 3600})
+        return mcp_token_payload(str(claims["owner"]), resource)
+    if form.get("grant_type") == "refresh_token":
+        claims = verify_claims(form.get("refresh_token", ""), mcp_secret(), token_type="mcp_refresh", audience=resource)
+        if not claims:
+            raise ValidationError("Refresh token is invalid or expired.")
+        return mcp_token_payload(str(claims["sub"]), resource)
+    raise ValidationError("OAuth grant type is not supported.")
+
+
+def mcp_access_claims(headers: Dict[str, str], origin: str) -> Optional[Dict[str, Any]]:
+    token = get_authorization_token(headers)
+    if not token:
+        return None
+    return verify_claims(token, mcp_secret(), token_type="mcp_access", audience=f"{origin}/mcp")
+
+
+def mcp_task_url(task_id: Any) -> str:
+    frontend = compact_text(get_config_value("APP_FRONTEND_URL")) or "https://work-diary.local/"
+    separator = "&" if "?" in frontend else "?"
+    return f"{frontend}{separator}task={quote(str(task_id), safe='')}"
+
+
+def mcp_task_view(task: Dict[str, Any]) -> Dict[str, Any]:
+    fields = [
+        "id", "title", "project", "start_date", "start_time", "due_date", "due_time",
+        "priority", "location", "notes", "completed", "completed_at", "created_at", "updated_at",
+    ]
+    payload = {field: task.get(field, "") for field in fields}
+    payload["url"] = mcp_task_url(task.get("id"))
+    return payload
+
+
+def mcp_filter_tasks(status: str) -> List[Dict[str, Any]]:
+    tasks = list_tasks({})
+    today = dt.datetime.now(ZoneInfo(REMINDER_TIMEZONE)).date().isoformat()
+    if status == "completed":
+        return [task for task in tasks if task.get("completed")]
+    open_tasks = [task for task in tasks if not task.get("completed")]
+    if status == "all":
+        return tasks
+    if status == "overdue":
+        return [task for task in open_tasks if task.get("due_date") and task["due_date"] < today]
+    if status == "today":
+        return [task for task in open_tasks if task_is_active_on(task, today)]
+    if status == "upcoming":
+        return [task for task in open_tasks if (task.get("start_date") or task.get("due_date") or "") > today]
+    return open_tasks
+
+
+def mcp_tool_success(payload: Any, message: str = "") -> Dict[str, Any]:
+    return {
+        "content": [{"type": "text", "text": message or json.dumps(payload, separators=(",", ":"))}],
+        "structuredContent": payload,
+    }
+
+
+def mcp_idempotent(tool_name: str, key: str, operation) -> Any:
+    item_id = "mcp-idem-" + hashlib.sha256(f"{tool_name}:{key}".encode("utf-8")).hexdigest()
+    existing = google_integration_table.get_item(Key={"id": item_id}, ConsistentRead=True).get("Item")
+    if existing and existing.get("result"):
+        return json.loads(existing["result"])
+    result = operation()
+    google_integration_table.put_item(
+        Item={"id": item_id, "result": json.dumps(result, separators=(",", ":")), "created_at": now_iso(), "ttl": int(time.time()) + 30 * 24 * 60 * 60}
+    )
+    return result
+
+
+def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    if name == "search":
+        query = compact_text(arguments.get("query")).lower()
+        matches = []
+        for task in list_tasks({}):
+            view = mcp_task_view(task)
+            haystack = " ".join(str(view.get(field) or "") for field in ("title", "project", "notes", "priority")).lower()
+            state_match = (
+                (query == "overdue" and task in mcp_filter_tasks("overdue"))
+                or (query == "today" and task in mcp_filter_tasks("today"))
+                or (query in {"open", "incomplete"} and not task.get("completed"))
+                or (query in {"done", "completed"} and task.get("completed"))
+            )
+            if not query or query in haystack or state_match:
+                matches.append({"id": str(task["id"]), "title": task["title"], "url": view["url"]})
+        payload = {"results": matches[:100]}
+        return {"content": [{"type": "text", "text": json.dumps(payload, separators=(",", ":"))}]}
+    if name == "fetch":
+        task = mcp_task_view(get_task(compact_text(arguments.get("id"))))
+        payload = {"id": str(task["id"]), "title": task["title"], "text": json.dumps(task, separators=(",", ":")), "url": task["url"], "metadata": {"updated_at": task["updated_at"], "completed": task["completed"]}}
+        return {"content": [{"type": "text", "text": json.dumps(payload, separators=(",", ":"))}]}
+    if name == "list_tasks":
+        status = compact_text(arguments.get("status")) or "open"
+        if status not in {"open", "overdue", "today", "upcoming", "completed", "all"}:
+            raise ValidationError("Task status is not supported.")
+        limit = max(1, min(int(arguments.get("limit") or 50), 100))
+        tasks = [mcp_task_view(task) for task in mcp_filter_tasks(status)[:limit]]
+        return mcp_tool_success({"status": status, "count": len(tasks), "tasks": tasks})
+    if name == "create_task":
+        key = compact_text(arguments.get("idempotency_key"))
+        if len(key) < 8:
+            raise ValidationError("A valid idempotency key is required.")
+        allowed = {field: arguments.get(field, "") for field in ("title", "start_date", "start_time", "due_date", "due_time", "priority", "project", "notes")}
+        result = mcp_idempotent(name, key, lambda: mcp_task_view(create_task({**allowed, "completed": False})))
+        return mcp_tool_success({"task": result}, f"Created Work Diary task: {result['title']}")
+    if name in {"complete_task", "reschedule_task"}:
+        task_id = compact_text(arguments.get("task_id"))
+        expected = compact_text(arguments.get("expected_updated_at"))
+        key = compact_text(arguments.get("idempotency_key"))
+        if len(key) < 8:
+            raise ValidationError("A valid idempotency key is required.")
+
+        def mutate_task():
+            current = get_task(task_id)
+            if current.get("updated_at") != expected:
+                raise ValidationError("Task changed since it was read. Fetch it again before updating.")
+            if name == "complete_task":
+                return mcp_task_view(update_task(task_id, {"completed": True}))
+            updates = {field: arguments[field] for field in ("start_date", "start_time", "due_date", "due_time") if field in arguments}
+            if not updates:
+                raise ValidationError("At least one schedule field is required.")
+            return mcp_task_view(update_task(task_id, updates))
+
+        result = mcp_idempotent(name, key, mutate_task)
+        action = "Completed" if name == "complete_task" else "Rescheduled"
+        return mcp_tool_success({"task": result}, f"{action} Work Diary task: {result['title']}")
+    raise ValidationError("MCP tool is not supported.")
+
+
+def handle_mcp_request(body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    request_id = body.get("id")
+    method = compact_text(body.get("method"))
+    if body.get("jsonrpc") != "2.0" or not method:
+        return jsonrpc_error(request_id, -32600, "Invalid Request")
+    if method == "notifications/initialized":
+        return None
+    if method == "initialize":
+        return jsonrpc_result(
+            request_id,
+            {
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": {"name": "Work Diary", "version": "1.0.0"},
+                "instructions": "Use Work Diary as the source of truth for Daniel's private tasks. Read current state before proposing changes and only mutate tasks after confirmation.",
+            },
+        )
+    if method == "ping":
+        return jsonrpc_result(request_id, {})
+    if method == "tools/list":
+        return jsonrpc_result(request_id, {"tools": tool_descriptors()})
+    if method == "tools/call":
+        params = body.get("params") or {}
+        if not isinstance(params, dict) or not isinstance(params.get("arguments", {}), dict):
+            return jsonrpc_error(request_id, -32602, "Invalid tool arguments")
+        try:
+            result = call_mcp_tool(compact_text(params.get("name")), params.get("arguments", {}))
+        except (ValidationError, NotFoundError) as exc:
+            result = {"content": [{"type": "text", "text": str(exc).strip("'")}], "isError": True}
+        return jsonrpc_result(request_id, result)
+    return jsonrpc_error(request_id, -32601, "Method not found")
 
 
 def scan_table(table):
@@ -3518,6 +3853,40 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         headers = {str(key).lower(): value for key, value in raw_headers.items()}
         if method == "OPTIONS":
             return response(204, {})
+
+        origin = request_origin(event, headers) if path.startswith(("/mcp", "/oauth/", "/.well-known/")) else ""
+        if method == "GET" and path in {"/.well-known/oauth-authorization-server", "/.well-known/openid-configuration"}:
+            return response(200, oauth_server_metadata(origin))
+        if method == "GET" and path in {"/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"}:
+            return response(200, protected_resource_metadata(origin))
+        if method == "POST" and path == "/oauth/register":
+            return response(201, mcp_register_client(parse_json_body(event)))
+        if path == "/oauth/authorize" and method == "GET":
+            return html_response(200, mcp_authorize_page(parse_query(event), origin))
+        if path == "/oauth/authorize" and method == "POST":
+            form = parse_form_body(event)
+            try:
+                code = mcp_issue_authorization_code(form, origin)
+            except ValidationError as exc:
+                return html_response(400, mcp_authorize_page(form, origin, str(exc)))
+            location = form["redirect_uri"] + ("&" if "?" in form["redirect_uri"] else "?") + urlencode({"code": code, "state": form["state"]})
+            return response(302, {"ok": True}, {"Location": location})
+        if path == "/oauth/token" and method == "POST":
+            return response(200, mcp_exchange_token(parse_form_body(event), origin))
+        if path == "/mcp":
+            claims = mcp_access_claims(headers, origin)
+            if not claims:
+                metadata_url = f"{origin}/.well-known/oauth-protected-resource/mcp"
+                return response(401, {"error": "authorization_required"}, {"WWW-Authenticate": f'Bearer resource_metadata="{metadata_url}"'})
+            if method == "GET":
+                return response(405, {"error": "SSE stream is not available; use POST."}, {"Allow": "POST"})
+            if method != "POST":
+                return response(405, {"error": "Method not allowed."}, {"Allow": "GET, POST"})
+            mcp_result = handle_mcp_request(parse_json_body(event))
+            if mcp_result is None:
+                return {"statusCode": 202, "headers": {"Cache-Control": "no-store"}, "body": ""}
+            return response(200, mcp_result, {"MCP-Protocol-Version": MCP_PROTOCOL_VERSION})
+
         if path not in PUBLIC_API_PATHS and not is_authenticated(headers):
             return response(401, {"error": "Login required."})
 
