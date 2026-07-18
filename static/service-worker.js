@@ -1,4 +1,4 @@
-const APP_ASSET_VERSION = "20260718-timezone-init-fix";
+const APP_ASSET_VERSION = "20260718-task-archive";
 const CACHE_NAME = `work-diary-shell-${APP_ASSET_VERSION}`;
 const NETWORK_TIMEOUT_MS = 5000;
 const APP_SHELL = [

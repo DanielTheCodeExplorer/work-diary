@@ -115,13 +115,13 @@ def tool_descriptors() -> list[Dict[str, Any]]:
         {
             "name": "list_tasks",
             "title": "List Work Diary tasks",
-            "description": "Use this when planning a day or reviewing open, overdue, today, upcoming, or completed tasks.",
+            "description": "Use this when planning a day or reviewing open, overdue, today, upcoming, completed, or archived tasks.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "status": {
                         "type": "string",
-                        "enum": ["open", "overdue", "today", "upcoming", "completed", "all"],
+                        "enum": ["open", "overdue", "today", "upcoming", "completed", "archived", "all"],
                         "default": "open",
                     },
                     "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
@@ -169,6 +169,22 @@ def tool_descriptors() -> list[Dict[str, Any]]:
             "annotations": {**write, "idempotentHint": True},
         },
         {
+            "name": "archive_task",
+            "title": "Archive a completed Work Diary task",
+            "description": "Use this when the user has confirmed that a completed task should leave normal planning views. This is reversible in Work Diary and does not permanently delete the task.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "expected_updated_at": {"type": "string"},
+                    "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 200},
+                },
+                "required": ["task_id", "expected_updated_at", "idempotency_key"],
+                "additionalProperties": False,
+            },
+            "annotations": {**write, "idempotentHint": True},
+        },
+        {
             "name": "reschedule_task",
             "title": "Reschedule a Work Diary task",
             "description": "Use this when the user has confirmed new start or end schedule fields for one task.",
@@ -197,4 +213,3 @@ def jsonrpc_result(request_id: Any, result: Dict[str, Any]) -> Dict[str, Any]:
 
 def jsonrpc_error(request_id: Any, code: int, message: str) -> Dict[str, Any]:
     return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
-

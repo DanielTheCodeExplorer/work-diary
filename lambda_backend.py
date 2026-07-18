@@ -1428,7 +1428,7 @@ def mcp_task_url(task_id: Any) -> str:
 def mcp_task_view(task: Dict[str, Any]) -> Dict[str, Any]:
     fields = [
         "id", "title", "project", "start_date", "start_time", "due_date", "due_time",
-        "priority", "location", "notes", "completed", "completed_at", "created_at", "updated_at",
+        "priority", "location", "notes", "completed", "completed_at", "archived", "archived_at", "created_at", "updated_at",
     ]
     payload = {field: task.get(field, "") for field in fields}
     payload["url"] = mcp_task_url(task.get("id"))
@@ -1437,6 +1437,10 @@ def mcp_task_view(task: Dict[str, Any]) -> Dict[str, Any]:
 
 def mcp_filter_tasks(status: str) -> List[Dict[str, Any]]:
     tasks = list_tasks({})
+    archived_tasks = [task for task in tasks if task.get("archived")]
+    if status == "archived":
+        return archived_tasks
+    tasks = [task for task in tasks if not task.get("archived")]
     today = dt.datetime.now(ZoneInfo(REMINDER_TIMEZONE)).date().isoformat()
     if status == "completed":
         return [task for task in tasks if task.get("completed")]
@@ -1475,7 +1479,7 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     if name == "search":
         query = compact_text(arguments.get("query")).lower()
         matches = []
-        for task in list_tasks({}):
+        for task in (task for task in list_tasks({}) if not task.get("archived")):
             view = mcp_task_view(task)
             haystack = " ".join(str(view.get(field) or "") for field in ("title", "project", "notes", "priority")).lower()
             state_match = (
@@ -1494,7 +1498,7 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         return {"content": [{"type": "text", "text": json.dumps(payload, separators=(",", ":"))}]}
     if name == "list_tasks":
         status = compact_text(arguments.get("status")) or "open"
-        if status not in {"open", "overdue", "today", "upcoming", "completed", "all"}:
+        if status not in {"open", "overdue", "today", "upcoming", "completed", "archived", "all"}:
             raise ValidationError("Task status is not supported.")
         limit = max(1, min(int(arguments.get("limit") or 50), 100))
         tasks = [mcp_task_view(task) for task in mcp_filter_tasks(status)[:limit]]
@@ -1506,7 +1510,7 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         allowed = {field: arguments.get(field, "") for field in ("title", "start_date", "start_time", "due_date", "due_time", "priority", "project", "notes")}
         result = mcp_idempotent(name, key, lambda: mcp_task_view(create_task({**allowed, "completed": False})))
         return mcp_tool_success({"task": result}, f"Created Work Diary task: {result['title']}")
-    if name in {"complete_task", "reschedule_task"}:
+    if name in {"complete_task", "reschedule_task", "archive_task"}:
         task_id = compact_text(arguments.get("task_id"))
         expected = compact_text(arguments.get("expected_updated_at"))
         key = compact_text(arguments.get("idempotency_key"))
@@ -1517,6 +1521,12 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             current = get_task(task_id)
             if current.get("updated_at") != expected:
                 raise ValidationError("Task changed since it was read. Fetch it again before updating.")
+            if name == "archive_task":
+                if current.get("archived"):
+                    return mcp_task_view(current)
+                if not current.get("completed"):
+                    raise ValidationError("Only completed tasks can be archived. Complete the task first.")
+                return mcp_task_view(update_task(task_id, {"archived": True}))
             if name == "complete_task":
                 return mcp_task_view(update_task(task_id, {"completed": True}))
             updates = {field: arguments[field] for field in ("start_date", "start_time", "due_date", "due_time") if field in arguments}
@@ -1525,7 +1535,7 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             return mcp_task_view(update_task(task_id, updates))
 
         result = mcp_idempotent(name, key, mutate_task)
-        action = "Completed" if name == "complete_task" else "Rescheduled"
+        action = {"complete_task": "Completed", "archive_task": "Archived"}.get(name, "Rescheduled")
         return mcp_tool_success({"task": result}, f"{action} Work Diary task: {result['title']}")
     raise ValidationError("MCP tool is not supported.")
 
@@ -2063,6 +2073,8 @@ def row_to_task(item: Dict[str, Any]) -> Dict[str, Any]:
         "google_sync_error": item.get("google_sync_error", ""),
         "completed": to_bool(item.get("completed")),
         "completed_at": item.get("completed_at", ""),
+        "archived": to_bool(item.get("archived")),
+        "archived_at": item.get("archived_at", ""),
         "created_at": item.get("created_at", ""),
         "updated_at": item.get("updated_at", ""),
     }
@@ -2398,6 +2410,11 @@ def list_tasks(filters: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]
 
 def filter_tasks(tasks: List[Dict[str, Any]], filters: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
     filters = filters or {}
+    archived_filter = compact_text(filters.get("archived")).lower()
+    if archived_filter in {"true", "1", "yes"}:
+        tasks = [task for task in tasks if task["archived"]]
+    elif archived_filter in {"false", "0", "no"}:
+        tasks = [task for task in tasks if not task["archived"]]
     completed_filter = compact_text(filters.get("completed")).lower()
     if completed_filter in {"true", "1", "yes"}:
         return [task for task in tasks if task["completed"]]
@@ -2455,6 +2472,8 @@ def create_task(data: Dict[str, Any]) -> Dict[str, Any]:
         "google_sync_error": "",
         "completed": completed,
         "completed_at": timestamp if completed else "",
+        "archived": False,
+        "archived_at": "",
         "created_at": timestamp,
         "updated_at": timestamp,
     }
@@ -2475,6 +2494,14 @@ def update_task(task_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
         completed_at = timestamp
     if not completed:
         completed_at = ""
+    archived = validate_boolean(merged.get("archived"), "Archived")
+    if archived and not completed:
+        raise ValidationError("Only completed tasks can be archived.")
+    archived_at = current.get("archived_at", "")
+    if archived and not current.get("archived"):
+        archived_at = timestamp
+    if not archived:
+        archived_at = ""
     schedule = validate_task_schedule(merged)
     start_date, due_date = schedule.start_date, schedule.end_date
     start_time, due_time = schedule.start_time, schedule.end_time
@@ -2511,12 +2538,14 @@ def update_task(task_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
         "google_sync_error": compact_text(current.get("google_sync_error")),
         "completed": completed,
         "completed_at": completed_at,
+        "archived": archived,
+        "archived_at": archived_at,
         "created_at": current["created_at"],
         "updated_at": timestamp,
     }
     tasks_table.put_item(Item=item)
     updated = get_task(task_id)
-    if updated["completed"] or not task_reminder_datetime(updated):
+    if updated["completed"] or updated["archived"] or not task_reminder_datetime(updated):
         delete_task_reminder_schedule(task_id)
     else:
         schedule_task_reminder(updated)
@@ -2531,7 +2560,7 @@ def project_open_tasks(project_id: Any) -> List[Dict[str, Any]]:
     return [
         task
         for task in list_tasks({})
-        if not task["completed"] and str(task.get("project_id") or "") == str(project["id"])
+        if not task["completed"] and not task.get("archived") and str(task.get("project_id") or "") == str(project["id"])
     ]
 
 

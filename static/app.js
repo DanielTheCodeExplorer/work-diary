@@ -74,7 +74,7 @@ const on = (selector, event, handler, root = document) => {
   return element;
 };
 const API_BASE_URL = window.API_BASE_URL || "";
-const APP_ASSET_VERSION = "20260718-timezone-init-fix";
+const APP_ASSET_VERSION = "20260718-task-archive";
 const API_REQUEST_TIMEOUT_MS = 10000;
 const SETTINGS_KEY = "workDiarySettings";
 const HIDDEN_DASHBOARD_TASKS_KEY = "workDiaryHiddenDashboardTasks";
@@ -1203,8 +1203,10 @@ function sortTasks(tasks) {
 
 function taskBuckets() {
   const tasks = Array.isArray(state.tasks) ? state.tasks : [];
-  const openTasks = tasks.filter((task) => !task.completed);
-  const completedTasks = tasks.filter((task) => task.completed);
+  const activeTasks = tasks.filter((task) => !task.archived);
+  const archivedTasks = tasks.filter((task) => task.archived);
+  const openTasks = activeTasks.filter((task) => !task.completed);
+  const completedTasks = activeTasks.filter((task) => task.completed);
   const inboxTasks = openTasks.filter((task) => !taskHasDate(task));
   const todayTasks = openTasks.filter((task) => taskIsActiveOn(task, today()));
   const upcomingTasks = openTasks.filter((task) => taskHasDate(task) && !taskIsActiveOn(task, today()));
@@ -1216,6 +1218,7 @@ function taskBuckets() {
     inbox: sortTasks(inboxTasks),
     today: sortTasks(todayTasks),
     upcoming: sortTasks(upcomingTasks),
+    archived: sortCompletedTasks(archivedTasks),
   };
 }
 
@@ -1356,7 +1359,7 @@ function itemMatchesProjectRecord(item, project) {
 }
 
 function linkedProjectTasks(project) {
-  return (Array.isArray(state.tasks) ? state.tasks : []).filter((task) => itemMatchesProjectRecord(task, project));
+  return (Array.isArray(state.tasks) ? state.tasks : []).filter((task) => !task.archived && itemMatchesProjectRecord(task, project));
 }
 
 function linkedProjectEntries(project) {
@@ -1661,6 +1664,7 @@ function taskBucketTitle(bucket) {
   if (bucket === "complete") return "Complete";
   if (bucket === "today") return "Today";
   if (bucket === "upcoming") return "Upcoming";
+  if (bucket === "archived") return "Archived";
   return "Inbox";
 }
 
@@ -1669,10 +1673,12 @@ function taskBucketCountLabel(bucket, count) {
   if (bucket === "complete") return `${count} done`;
   if (bucket === "today") return `${count} today`;
   if (bucket === "upcoming") return `${count} items`;
+  if (bucket === "archived") return `${count} archived`;
   return `${count} undated`;
 }
 
 function taskBucketForTask(task) {
+  if (task.archived) return "archived";
   if (task.completed) return "complete";
   if (taskIsActiveOn(task, today())) return "today";
   if (taskHasDate(task)) return "upcoming";
@@ -1700,6 +1706,23 @@ function googleSyncChip(task) {
   return "";
 }
 
+function taskPrimaryControl(task) {
+  if (task.archived) {
+    return `<span class="task-checkbox checked" aria-label="Archived task"><svg viewBox="0 0 24 24" focusable="false"><path d="M20 6 9 17l-5-5"></path></svg></span>`;
+  }
+  return `<button class="task-checkbox ${task.completed ? "checked" : ""}" type="button" data-action="toggle-task" aria-label="${task.completed ? "Mark task open" : "Mark task done"}"><svg viewBox="0 0 24 24" focusable="false"><path d="M20 6 9 17l-5-5"></path></svg></button>`;
+}
+
+function taskActions(task) {
+  if (task.archived) {
+    return `<button class="link-button" type="button" data-action="restore-task">Restore</button><button class="ghost-button danger" type="button" data-action="delete-task">Delete permanently</button>`;
+  }
+  const archive = task.completed
+    ? `<button class="link-button" type="button" data-action="archive-task">Archive</button>`
+    : "";
+  return `${archive}<button class="link-button" type="button" data-action="edit-task">Edit</button><button class="ghost-button danger" type="button" data-action="delete-task">Delete</button>`;
+}
+
 function renderTaskCard(task, options = {}) {
   const expanded = Boolean(options.expanded);
   const bucket = taskBucketForTask(task);
@@ -1713,11 +1736,7 @@ function renderTaskCard(task, options = {}) {
     .join("");
   return `
     <article class="task-item ${task.completed ? "completed" : ""} ${late ? "late" : ""}" data-task-id="${task.id}">
-      <button class="task-checkbox ${task.completed ? "checked" : ""}" type="button" data-action="toggle-task" aria-label="${task.completed ? "Mark task open" : "Mark task done"}">
-        <svg viewBox="0 0 24 24" focusable="false">
-          <path d="M20 6 9 17l-5-5"></path>
-        </svg>
-      </button>
+      ${taskPrimaryControl(task)}
       <div class="task-main">
         <div class="task-title-row">
           <div class="task-title">${escapeHtml(task.title)}</div>
@@ -1729,8 +1748,7 @@ function renderTaskCard(task, options = {}) {
       </div>
       <div class="task-actions">
         ${hideUpcomingButton}
-        <button class="link-button" type="button" data-action="edit-task">Edit</button>
-        <button class="ghost-button danger" type="button" data-action="delete-task">Delete</button>
+        ${taskActions(task)}
       </div>
     </article>
   `;
@@ -1748,11 +1766,7 @@ function renderTaskAgendaItem(task, options = {}) {
     : "";
   return `
     <article class="task-agenda-item ${task.completed ? "completed" : ""} ${late ? "late" : ""}" data-task-id="${escapeHtml(task.id)}">
-      <button class="task-checkbox ${task.completed ? "checked" : ""}" type="button" data-action="toggle-task" aria-label="${task.completed ? "Mark task open" : "Mark task done"}">
-        <svg viewBox="0 0 24 24" focusable="false">
-          <path d="M20 6 9 17l-5-5"></path>
-        </svg>
-      </button>
+      ${taskPrimaryControl(task)}
       <div class="task-main">
         <div class="task-title-row">
           <div class="task-title">${escapeHtml(task.title)}</div>
@@ -1768,8 +1782,7 @@ function renderTaskAgendaItem(task, options = {}) {
       </div>
       <div class="task-actions">
         ${hideUpcomingButton}
-        <button class="link-button" type="button" data-action="edit-task">Edit</button>
-        <button class="ghost-button danger" type="button" data-action="delete-task">Delete</button>
+        ${taskActions(task)}
       </div>
     </article>
   `;
@@ -1884,6 +1897,12 @@ function renderOverview() {
       value: buckets.completedTasks.length,
       detail: buckets.completedTasks.length === 1 ? "task done" : "tasks done",
     },
+    {
+      action: "overview-archived",
+      label: "Archived",
+      value: buckets.archived.length,
+      detail: buckets.archived.length === 1 ? "task to review" : "tasks to review",
+    },
   ];
 
   $("#overviewCards").innerHTML = cards
@@ -1997,7 +2016,7 @@ function renderTaskDetail() {
   $("#taskDetailHeading").textContent = title;
   $("#taskDetailCount").innerHTML = countMarkup(
     tasks.length,
-    state.taskBucket === "incomplete" ? "open" : state.taskBucket === "complete" ? "done" : state.taskBucket === "upcoming" ? "items" : state.taskBucket === "today" ? "today" : "undated"
+    state.taskBucket === "incomplete" ? "open" : state.taskBucket === "complete" ? "done" : state.taskBucket === "archived" ? "archived" : state.taskBucket === "upcoming" ? "items" : state.taskBucket === "today" ? "today" : "undated"
   );
   $("#taskDetailList").innerHTML = tasks.length
     ? tasks.map((task) => renderTaskAgendaItem(task, { expanded: true, allowHideUpcoming: state.taskBucket === "upcoming" })).join("")
@@ -2104,7 +2123,7 @@ function evidenceDate(item) {
 }
 
 function calendarActivity(date) {
-  const tasks = (Array.isArray(state.tasks) ? state.tasks : []).filter((task) => taskFallsOnDate(task, date));
+  const tasks = (Array.isArray(state.tasks) ? state.tasks : []).filter((task) => !task.archived && taskFallsOnDate(task, date));
   const entries = (Array.isArray(state.entries) ? state.entries : []).filter((entry) => entry.entry_date === date);
   const achievements = (Array.isArray(state.achievements) ? state.achievements : []).filter((item) => item.achieved_at === date);
   const evidence = (Array.isArray(state.evidence) ? state.evidence : []).filter((item) => evidenceDate(item) === date);
@@ -3322,9 +3341,27 @@ async function toggleTask(taskId) {
 }
 
 async function deleteTask(taskId) {
+  const task = findTask(taskId);
+  const label = task?.title ? `“${task.title}”` : "this task";
+  if (!window.confirm(`Permanently delete ${label}? This cannot be undone.`)) return;
   await api(`/api/tasks/${taskId}`, { method: "DELETE" });
   await loadData();
   showToast("Task deleted.");
+}
+
+async function setTaskArchived(taskId, archived) {
+  const task = findTask(taskId);
+  if (!task) return;
+  if (archived && !task.completed) {
+    showToast("Complete the task before archiving it.");
+    return;
+  }
+  await api(`/api/tasks/${task.id}`, {
+    method: "PUT",
+    body: { archived },
+  });
+  await loadData();
+  showToast(archived ? "Task archived." : "Task restored.");
 }
 
 async function deleteCurrentTask() {
@@ -3504,6 +3541,12 @@ async function handleTaskListAction(event) {
   }
   if (button.dataset.action === "delete-task") {
     await deleteTask(taskId);
+  }
+  if (button.dataset.action === "archive-task") {
+    await setTaskArchived(taskId, true);
+  }
+  if (button.dataset.action === "restore-task") {
+    await setTaskArchived(taskId, false);
   }
   if (button.dataset.action === "hide-upcoming-task") {
     hideUpcomingTask(taskId);
@@ -3767,6 +3810,9 @@ function bindEvents() {
     }
     if (button.dataset.action === "overview-completed") {
       openTaskBucket("complete");
+    }
+    if (button.dataset.action === "overview-archived") {
+      openTaskBucket("archived");
     }
   });
 

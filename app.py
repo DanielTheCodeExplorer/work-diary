@@ -193,9 +193,12 @@ def init_db(conn: sqlite3.Connection) -> None:
             google_sync_error TEXT DEFAULT '',
             completed INTEGER NOT NULL DEFAULT 0,
             completed_at TEXT DEFAULT '',
+            archived INTEGER NOT NULL DEFAULT 0,
+            archived_at TEXT DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            CHECK (completed IN (0, 1))
+            CHECK (completed IN (0, 1)),
+            CHECK (archived IN (0, 1))
         );
 
         CREATE TABLE IF NOT EXISTS achievements (
@@ -315,6 +318,8 @@ def ensure_task_columns(conn: sqlite3.Connection) -> None:
         "google_sync_hash": "TEXT DEFAULT ''",
         "google_synced_at": "TEXT DEFAULT ''",
         "google_sync_error": "TEXT DEFAULT ''",
+        "archived": "INTEGER NOT NULL DEFAULT 0",
+        "archived_at": "TEXT DEFAULT ''",
     }
     for name, definition in columns.items():
         if name not in existing:
@@ -2280,6 +2285,8 @@ def row_to_task(row: sqlite3.Row) -> Dict[str, Any]:
         "google_sync_error": row["google_sync_error"],
         "completed": bool(row["completed"]),
         "completed_at": row["completed_at"],
+        "archived": bool(row["archived"]),
+        "archived_at": row["archived_at"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -2298,6 +2305,7 @@ def next_project_task_order(conn: sqlite3.Connection, project_id: str) -> int:
 def create_task(conn: sqlite3.Connection, data: Dict[str, Any]) -> Dict[str, Any]:
     timestamp = now_iso()
     completed = validate_boolean(data.get("completed"), "Completed")
+    archived = False
     schedule = validate_task_schedule(data)
     start_date, due_date = schedule.start_date, schedule.end_date
     start_time, due_time = schedule.start_time, schedule.end_time
@@ -2313,9 +2321,9 @@ def create_task(conn: sqlite3.Connection, data: Dict[str, Any]) -> Dict[str, Any
             location, notes, project_order,
             google_sync_target, google_calendar_event_id, google_calendar_event_link,
             google_task_id, google_task_link, google_sync_hash, google_synced_at, google_sync_error,
-            completed, completed_at, created_at, updated_at
+            completed, completed_at, archived, archived_at, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             required_text(data, "title", "Task title", 240),
@@ -2343,6 +2351,8 @@ def create_task(conn: sqlite3.Connection, data: Dict[str, Any]) -> Dict[str, Any
             "",
             1 if completed else 0,
             timestamp if completed else "",
+            1 if archived else 0,
+            timestamp if archived else "",
             timestamp,
             timestamp,
         ),
@@ -2380,6 +2390,11 @@ def list_tasks(
         """
     ).fetchall()
     tasks = [row_to_task(row) for row in rows]
+    archived_filter = compact_text(filters.get("archived")).lower()
+    if archived_filter in {"true", "1", "yes"}:
+        tasks = [task for task in tasks if task["archived"]]
+    elif archived_filter in {"false", "0", "no"}:
+        tasks = [task for task in tasks if not task["archived"]]
     completed_filter = compact_text(filters.get("completed")).lower()
     if completed_filter in {"true", "1", "yes"}:
         return [task for task in tasks if task["completed"]]
@@ -2400,6 +2415,14 @@ def update_task(
         completed_at = timestamp
     if not completed:
         completed_at = ""
+    archived = validate_boolean(merged.get("archived"), "Archived")
+    if archived and not completed:
+        raise ValidationError("Only completed tasks can be archived.")
+    archived_at = current.get("archived_at", "")
+    if archived and not current.get("archived"):
+        archived_at = timestamp
+    if not archived:
+        archived_at = ""
     schedule = validate_task_schedule(merged)
     start_date, due_date = schedule.start_date, schedule.end_date
     start_time, due_time = schedule.start_time, schedule.end_time
@@ -2438,6 +2461,8 @@ def update_task(
             google_sync_error = ?,
             completed = ?,
             completed_at = ?,
+            archived = ?,
+            archived_at = ?,
             updated_at = ?
         WHERE id = ?
         """,
@@ -2467,13 +2492,15 @@ def update_task(
             compact_text(current.get("google_sync_error")),
             1 if completed else 0,
             completed_at,
+            1 if archived else 0,
+            archived_at,
             timestamp,
             task_id,
         ),
     )
     conn.commit()
     updated = get_task(conn, task_id)
-    if updated["completed"] or not task_reminder_datetime(updated):
+    if updated["completed"] or updated["archived"] or not task_reminder_datetime(updated):
         delete_task_reminder_schedule(task_id)
     else:
         schedule_task_reminder(updated)
@@ -2488,7 +2515,7 @@ def project_open_tasks(conn: sqlite3.Connection, project_id: Any) -> List[Dict[s
     return [
         task
         for task in list_tasks(conn)
-        if not task["completed"] and str(task.get("project_id") or "") == str(project["id"])
+        if not task["completed"] and not task.get("archived") and str(task.get("project_id") or "") == str(project["id"])
     ]
 
 
