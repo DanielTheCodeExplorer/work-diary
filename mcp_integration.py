@@ -131,6 +131,21 @@ def tool_descriptors() -> list[Dict[str, Any]]:
             "annotations": readonly,
         },
         {
+            "name": "list_task_changes",
+            "title": "List recent GPT changes to a Work Diary task",
+            "description": "Use this when the user wants to review or reverse a recent task decision made through this MCP connection. History is retained for 90 days.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
+                },
+                "required": ["task_id"],
+                "additionalProperties": False,
+            },
+            "annotations": readonly,
+        },
+        {
             "name": "create_task",
             "title": "Create a Work Diary task",
             "description": "Use this when the user has confirmed a new task, including any schedule, project, reminder, recurrence, location, or notes.",
@@ -172,6 +187,23 @@ def tool_descriptors() -> list[Dict[str, Any]]:
                     "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 200},
                 },
                 "required": ["task_id", "expected_updated_at", "idempotency_key"],
+                "additionalProperties": False,
+            },
+            "annotations": {**write, "idempotentHint": True},
+        },
+        {
+            "name": "undo_task_change",
+            "title": "Undo a GPT change to a Work Diary task",
+            "description": "Use this after listing task changes when the user has confirmed which earlier change to reverse. It restores that change's prior task state without permanently deleting anything.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "change_id": {"type": "string"},
+                    "expected_updated_at": {"type": "string"},
+                    "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 200},
+                },
+                "required": ["task_id", "change_id", "expected_updated_at", "idempotency_key"],
                 "additionalProperties": False,
             },
             "annotations": {**write, "idempotentHint": True},
@@ -311,6 +343,21 @@ def tool_descriptors() -> list[Dict[str, Any]]:
             "annotations": readonly,
         },
         {
+            "name": "list_project_changes",
+            "title": "List recent GPT changes to a Work Diary project",
+            "description": "Use this when the user wants to review or reverse a recent project decision made through this MCP connection. History is retained for 90 days.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
+                },
+                "required": ["project_id"],
+                "additionalProperties": False,
+            },
+            "annotations": readonly,
+        },
+        {
             "name": "create_project",
             "title": "Create a Work Diary project",
             "description": "Use this when the user has confirmed a new project for organising tasks and calendar work.",
@@ -347,6 +394,23 @@ def tool_descriptors() -> list[Dict[str, Any]]:
                     "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 200},
                 },
                 "required": ["project_id", "expected_updated_at", "idempotency_key"],
+                "additionalProperties": False,
+            },
+            "annotations": {**write, "idempotentHint": True},
+        },
+        {
+            "name": "undo_project_change",
+            "title": "Undo a GPT change to a Work Diary project",
+            "description": "Use this after listing project changes when the user has confirmed which earlier change to reverse. It restores the prior project details, status, or task ordering without permanently deleting anything.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "change_id": {"type": "string"},
+                    "expected_updated_at": {"type": "string"},
+                    "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 200},
+                },
+                "required": ["project_id", "change_id", "expected_updated_at", "idempotency_key"],
                 "additionalProperties": False,
             },
             "annotations": {**write, "idempotentHint": True},

@@ -22,8 +22,10 @@ release does not provide an SSE stream.
 | `search` | Standard read-only task search | Read-only |
 | `fetch` | Standard read-only fetch by task ID | Read-only |
 | `list_tasks` | List open, overdue, today, upcoming, completed, archived, or all tasks | Read-only |
+| `list_task_changes` | Review GPT-made changes to one task from the last 90 days | Read-only |
 | `create_task` | Create a task using existing validation and Google sync | Idempotent write |
 | `update_task_details` | Change a task's title, project, location, or notes | Idempotent write |
+| `undo_task_change` | Restore the task state from before a selected GPT-made change | Reversible idempotent write |
 | `complete_task` | Complete a task after checking its last-read revision | Idempotent write |
 | `reopen_task` | Reopen a completed task without losing its schedule or details | Reversible idempotent write |
 | `reschedule_task` | Change independent start/end fields after a revision check | Idempotent write |
@@ -32,8 +34,10 @@ release does not provide an SSE stream.
 | `archive_task` | Hide an open or completed task from planning views after a revision check | Reversible idempotent write |
 | `restore_task` | Return an archived task to planning views without changing its completion state | Reversible idempotent write |
 | `list_projects` | List projects by status | Read-only |
+| `list_project_changes` | Review GPT-made changes to one project from the last 90 days | Read-only |
 | `create_project` | Create a project for organising tasks | Idempotent write |
 | `update_project` | Change project planning details | Idempotent write |
+| `undo_project_change` | Restore project details, status, or task order from before a selected GPT-made change | Reversible idempotent write |
 | `set_project_status` | Plan, activate, pause, complete, or reopen a project | Idempotent write |
 | `reorder_project_tasks` | Set the complete order of a project's open tasks | Idempotent write |
 
@@ -115,6 +119,18 @@ completed tasks, and ChatGPT can restore them if the user changes their mind.
 Restoring preserves whether the task was open or completed. Archived tasks can also be reviewed
 and permanently deleted from Work Diary's Archived view with an explicit
 confirmation. The MCP integration does not expose permanent deletion.
+
+MCP task and project updates are recorded in a separate DynamoDB change-history
+table for 90 days. ChatGPT can list that history and restore the state from
+before a selected change. Undo operations are also recorded, so an undo can be
+reversed. History contains planning fields only; it excludes Google credentials,
+provider IDs, and unrelated diary/account data.
+
+Undo restores state without deleting side effects that may already be useful or
+auditable. In particular, undoing completion of a recurring task does not delete
+the next occurrence already created, and undoing project completion retains the
+existing diary completion record. A mistakenly created task can be archived;
+creation is never undone by permanent deletion through MCP.
 
 ## Current private-release boundary
 

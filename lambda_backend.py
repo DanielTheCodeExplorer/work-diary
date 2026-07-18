@@ -96,6 +96,13 @@ REMINDER_TIMEZONE = "Europe/London"
 TASK_REMINDER_OFFSET_MINUTES = 10
 TASK_REMINDER_MAX_LATENESS_MINUTES = 30
 WEB_PUSH_TTL_SECONDS = 24 * 60 * 60
+MCP_CHANGE_HISTORY_SECONDS = 90 * 24 * 60 * 60
+MCP_TASK_SNAPSHOT_FIELDS = (
+    "title", "project_id", "project", "start_date", "start_time", "due_date", "due_time",
+    "reminder_at", "repeat_rule", "repeat_interval_days", "repeat_until", "location", "notes",
+    "project_order", "completed", "archived",
+)
+MCP_PROJECT_SNAPSHOT_FIELDS = ("name", "goal", "deadline", "status", "color", "notes")
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -110,6 +117,7 @@ ACHIEVEMENTS_TABLE = os.environ.get("ACHIEVEMENTS_TABLE", "WorkDiaryAchievements
 PROJECTS_TABLE = os.environ.get("PROJECTS_TABLE", "WorkDiaryProjects")
 PUSH_SUBSCRIPTIONS_TABLE = os.environ.get("PUSH_SUBSCRIPTIONS_TABLE", "WorkDiaryPushSubscriptions")
 GOOGLE_INTEGRATION_TABLE = os.environ.get("GOOGLE_INTEGRATION_TABLE", "WorkDiaryGoogleIntegration")
+MCP_CHANGES_TABLE = os.environ.get("MCP_CHANGES_TABLE", "WorkDiaryMcpChanges")
 UPLOADS_BUCKET = os.environ.get("UPLOADS_BUCKET", "")
 UPLOADS_PREFIX = os.environ.get("UPLOADS_PREFIX", "uploads/")
 REMINDER_SCHEDULE_GROUP = os.environ.get("REMINDER_SCHEDULE_GROUP", "work-diary-reminders")
@@ -126,6 +134,7 @@ achievements_table = DYNAMODB.Table(ACHIEVEMENTS_TABLE)
 projects_table = DYNAMODB.Table(PROJECTS_TABLE)
 push_subscriptions_table = DYNAMODB.Table(PUSH_SUBSCRIPTIONS_TABLE)
 google_integration_table = DYNAMODB.Table(GOOGLE_INTEGRATION_TABLE)
+mcp_changes_table = DYNAMODB.Table(MCP_CHANGES_TABLE)
 
 
 def now_iso() -> str:
@@ -1444,6 +1453,67 @@ def mcp_project_view(project: Dict[str, Any]) -> Dict[str, Any]:
     return {field: project.get(field, "") for field in fields}
 
 
+def mcp_snapshot(item: Dict[str, Any], fields) -> Dict[str, Any]:
+    return {field: item.get(field, "") for field in fields}
+
+
+def mcp_record_change(
+    entity_type: str,
+    entity_id: str,
+    tool_name: str,
+    before: Dict[str, Any],
+    after: Dict[str, Any],
+    *,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    if entity_type not in {"task", "project"}:
+        raise ValidationError("MCP change entity is not supported.")
+    created_at = now_iso()
+    item = {
+        "entity_key": f"{entity_type}#{entity_id}",
+        "change_id": f"{time.time_ns():020d}-{uuid.uuid4().hex}",
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "tool_name": tool_name,
+        "before": before,
+        "after": after,
+        "created_at": created_at,
+        "ttl": int(time.time()) + MCP_CHANGE_HISTORY_SECONDS,
+    }
+    if extra:
+        item.update(extra)
+    mcp_changes_table.put_item(Item=item)
+    return item
+
+
+def mcp_change_view(change: Dict[str, Any]) -> Dict[str, Any]:
+    fields = (
+        "change_id", "entity_type", "entity_id", "tool_name", "before", "after",
+        "before_task_ids", "after_task_ids", "undo_of", "created_at",
+    )
+    return {field: change[field] for field in fields if field in change}
+
+
+def mcp_list_changes(entity_type: str, entity_id: str, limit: int) -> List[Dict[str, Any]]:
+    response = mcp_changes_table.query(
+        KeyConditionExpression="entity_key = :entity_key",
+        ExpressionAttributeValues={":entity_key": f"{entity_type}#{entity_id}"},
+        ScanIndexForward=False,
+        Limit=limit,
+    )
+    return [mcp_change_view(item) for item in response.get("Items", [])]
+
+
+def mcp_get_change(entity_type: str, entity_id: str, change_id: str) -> Dict[str, Any]:
+    item = mcp_changes_table.get_item(
+        Key={"entity_key": f"{entity_type}#{entity_id}", "change_id": change_id},
+        ConsistentRead=True,
+    ).get("Item")
+    if not item:
+        raise NotFoundError("MCP change was not found or has expired.")
+    return item
+
+
 def mcp_filter_tasks(status: str) -> List[Dict[str, Any]]:
     tasks = list_tasks({})
     archived_tasks = [task for task in tasks if task.get("archived")]
@@ -1512,6 +1582,12 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         limit = max(1, min(int(arguments.get("limit") or 50), 100))
         tasks = [mcp_task_view(task) for task in mcp_filter_tasks(status)[:limit]]
         return mcp_tool_success({"status": status, "count": len(tasks), "tasks": tasks})
+    if name == "list_task_changes":
+        task_id = compact_text(arguments.get("task_id"))
+        get_task(task_id)
+        limit = max(1, min(int(arguments.get("limit") or 10), 20))
+        changes = mcp_list_changes("task", task_id, limit)
+        return mcp_tool_success({"task_id": task_id, "count": len(changes), "changes": changes})
     if name == "create_task":
         key = compact_text(arguments.get("idempotency_key"))
         if len(key) < 8:
@@ -1530,6 +1606,41 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
 
         result = mcp_idempotent(name, key, create_confirmed_task)
         return mcp_tool_success({"task": result}, f"Created Work Diary task: {result['title']}")
+    if name == "undo_task_change":
+        task_id = compact_text(arguments.get("task_id"))
+        change_id = compact_text(arguments.get("change_id"))
+        expected = compact_text(arguments.get("expected_updated_at"))
+        key = compact_text(arguments.get("idempotency_key"))
+        if len(key) < 8:
+            raise ValidationError("A valid idempotency key is required.")
+
+        def undo_task():
+            current = get_task(task_id)
+            if current.get("updated_at") != expected:
+                raise ValidationError("Task changed since it was read. Fetch it again before undoing a change.")
+            change = mcp_get_change("task", task_id, change_id)
+            before = change.get("before")
+            if not isinstance(before, dict):
+                raise ValidationError("This task change cannot be undone.")
+            restored = update_task(task_id, before, create_repeat=False)
+            mcp_record_change(
+                "task",
+                task_id,
+                name,
+                mcp_snapshot(current, MCP_TASK_SNAPSHOT_FIELDS),
+                mcp_snapshot(restored, MCP_TASK_SNAPSHOT_FIELDS),
+                extra={"undo_of": change_id},
+            )
+            return mcp_task_view(restored)
+
+        result = mcp_idempotent(name, key, undo_task)
+        return mcp_tool_success(
+            {
+                "task": result,
+                "note": "The selected task state was restored. Other recurring tasks already created by an earlier completion are not deleted.",
+            },
+            f"Undid a Work Diary change for task: {result['title']}",
+        )
     if name in {
         "update_task_details", "complete_task", "reopen_task", "reschedule_task",
         "set_task_reminder", "set_task_recurrence", "archive_task", "restore_task",
@@ -1544,18 +1655,29 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             current = get_task(task_id)
             if current.get("updated_at") != expected:
                 raise ValidationError("Task changed since it was read. Fetch it again before updating.")
+
+            def save_change(updated):
+                mcp_record_change(
+                    "task",
+                    task_id,
+                    name,
+                    mcp_snapshot(current, MCP_TASK_SNAPSHOT_FIELDS),
+                    mcp_snapshot(updated, MCP_TASK_SNAPSHOT_FIELDS),
+                )
+                return mcp_task_view(updated)
+
             if name == "archive_task":
                 if current.get("archived"):
                     return mcp_task_view(current)
-                return mcp_task_view(update_task(task_id, {"archived": True}))
+                return save_change(update_task(task_id, {"archived": True}))
             if name == "restore_task":
                 if not current.get("archived"):
                     return mcp_task_view(current)
-                return mcp_task_view(update_task(task_id, {"archived": False}))
+                return save_change(update_task(task_id, {"archived": False}))
             if name == "complete_task":
-                return mcp_task_view(update_task(task_id, {"completed": True}))
+                return save_change(update_task(task_id, {"completed": True}))
             if name == "reopen_task":
-                return mcp_task_view(update_task(task_id, {"completed": False}))
+                return save_change(update_task(task_id, {"completed": False}))
             if name == "update_task_details":
                 updates = {field: arguments[field] for field in ("title", "location", "notes") if field in arguments}
                 if "project" in arguments:
@@ -1566,11 +1688,11 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
                     updates["project_id"] = ""
                 if not updates:
                     raise ValidationError("At least one task detail is required.")
-                return mcp_task_view(update_task(task_id, updates))
+                return save_change(update_task(task_id, updates))
             if name == "set_task_reminder":
                 if "reminder_at" not in arguments:
                     raise ValidationError("Reminder time is required; use an empty value to clear it.")
-                return mcp_task_view(update_task(task_id, {"reminder_at": arguments["reminder_at"]}))
+                return save_change(update_task(task_id, {"reminder_at": arguments["reminder_at"]}))
             if name == "set_task_recurrence":
                 rule = validate_repeat_rule(arguments.get("repeat_rule"))
                 updates = {
@@ -1580,11 +1702,11 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
                 }
                 if rule == "none":
                     updates.update({"repeat_interval_days": 1, "repeat_until": ""})
-                return mcp_task_view(update_task(task_id, updates))
+                return save_change(update_task(task_id, updates))
             updates = {field: arguments[field] for field in ("start_date", "start_time", "due_date", "due_time") if field in arguments}
             if not updates:
                 raise ValidationError("At least one schedule field is required.")
-            return mcp_task_view(update_task(task_id, updates))
+            return save_change(update_task(task_id, updates))
 
         result = mcp_idempotent(name, key, mutate_task)
         action = {
@@ -1603,6 +1725,12 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             projects = [project for project in projects if project.get("status") == status]
         views = [mcp_project_view(project) for project in projects[:limit]]
         return mcp_tool_success({"status": status, "count": len(views), "projects": views})
+    if name == "list_project_changes":
+        project_id = compact_text(arguments.get("project_id"))
+        get_project(project_id)
+        limit = max(1, min(int(arguments.get("limit") or 10), 20))
+        changes = mcp_list_changes("project", project_id, limit)
+        return mcp_tool_success({"project_id": project_id, "count": len(changes), "changes": changes})
     if name == "create_project":
         key = compact_text(arguments.get("idempotency_key"))
         if len(key) < 8:
@@ -1611,6 +1739,57 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         allowed = {field: arguments[field] for field in allowed_fields if field in arguments}
         result = mcp_idempotent(name, key, lambda: mcp_project_view(create_project(allowed)))
         return mcp_tool_success({"project": result}, f"Created Work Diary project: {result['name']}")
+    if name == "undo_project_change":
+        project_id = compact_text(arguments.get("project_id"))
+        change_id = compact_text(arguments.get("change_id"))
+        expected = compact_text(arguments.get("expected_updated_at"))
+        key = compact_text(arguments.get("idempotency_key"))
+        if len(key) < 8:
+            raise ValidationError("A valid idempotency key is required.")
+
+        def undo_project():
+            current = get_project(project_id)
+            if current.get("updated_at") != expected:
+                raise ValidationError("Project changed since it was read. List projects again before undoing a change.")
+            change = mcp_get_change("project", project_id, change_id)
+            before_task_ids = change.get("before_task_ids")
+            if isinstance(before_task_ids, list):
+                restored_result = reorder_project_tasks(project_id, {"task_ids": before_task_ids})
+                restored = restored_result["project"]
+                result = {
+                    "project": mcp_project_view(restored),
+                    "tasks": [mcp_task_view(task) for task in restored_result["tasks"]],
+                }
+                extra = {
+                    "before_task_ids": change.get("after_task_ids", []),
+                    "after_task_ids": before_task_ids,
+                    "undo_of": change_id,
+                }
+            else:
+                before = change.get("before")
+                if not isinstance(before, dict):
+                    raise ValidationError("This project change cannot be undone.")
+                restored = update_project(project_id, before)
+                result = {"project": mcp_project_view(restored)}
+                extra = {"undo_of": change_id}
+            mcp_record_change(
+                "project",
+                project_id,
+                name,
+                mcp_snapshot(current, MCP_PROJECT_SNAPSHOT_FIELDS),
+                mcp_snapshot(restored, MCP_PROJECT_SNAPSHOT_FIELDS),
+                extra=extra,
+            )
+            return result
+
+        result = mcp_idempotent(name, key, undo_project)
+        return mcp_tool_success(
+            {
+                **result,
+                "note": "The selected project state was restored. Existing diary records of earlier project completion are retained.",
+            },
+            f"Undid a Work Diary change for project: {result['project']['name']}",
+        )
     if name in {"update_project", "set_project_status", "reorder_project_tasks"}:
         project_id = compact_text(arguments.get("project_id"))
         expected = compact_text(arguments.get("expected_updated_at"))
@@ -1622,18 +1801,39 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             current = get_project(project_id)
             if current.get("updated_at") != expected:
                 raise ValidationError("Project changed since it was read. List projects again before updating.")
+
+            def save_change(updated, *, extra=None):
+                mcp_record_change(
+                    "project",
+                    project_id,
+                    name,
+                    mcp_snapshot(current, MCP_PROJECT_SNAPSHOT_FIELDS),
+                    mcp_snapshot(updated, MCP_PROJECT_SNAPSHOT_FIELDS),
+                    extra=extra,
+                )
+
             if name == "update_project":
                 updates = {field: arguments[field] for field in ("name", "goal", "deadline", "color", "notes") if field in arguments}
                 if not updates:
                     raise ValidationError("At least one project detail is required.")
-                return {"project": mcp_project_view(update_project(project_id, updates))}
+                updated = update_project(project_id, updates)
+                save_change(updated)
+                return {"project": mcp_project_view(updated)}
             if name == "set_project_status":
                 status = validate_project_status(arguments.get("status"))
                 updated = complete_project(project_id) if status == "complete" else update_project(project_id, {"status": status})
+                save_change(updated)
                 return {"project": mcp_project_view(updated)}
+            before_task_ids = [str(task["id"]) for task in project_open_tasks(project_id)]
             reordered = reorder_project_tasks(project_id, {"task_ids": arguments.get("task_ids")})
+            updated = reordered["project"]
+            after_task_ids = [str(task["id"]) for task in reordered["tasks"]]
+            save_change(
+                updated,
+                extra={"before_task_ids": before_task_ids, "after_task_ids": after_task_ids},
+            )
             return {
-                "project": mcp_project_view(get_project(project_id)),
+                "project": mcp_project_view(updated),
                 "tasks": [mcp_task_view(task) for task in reordered["tasks"]],
             }
 
@@ -1657,8 +1857,8 @@ def handle_mcp_request(body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             {
                 "protocolVersion": MCP_PROTOCOL_VERSION,
                 "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "Work Diary", "version": "1.3.0"},
-                "instructions": "Use Work Diary as the source of truth for Daniel's private task and project planning. Read the current task or project revision before proposing changes, mutate only after confirmation, and never imply that permanent deletion is available.",
+                "serverInfo": {"name": "Work Diary", "version": "1.4.0"},
+                "instructions": "Use Work Diary as the source of truth for Daniel's private task and project planning. Read the current task or project revision before proposing changes, mutate only after confirmation, use change history and undo when Daniel changes a decision, and never imply that permanent deletion is available.",
             },
         )
     if method == "ping":
@@ -2588,7 +2788,7 @@ def create_task(data: Dict[str, Any]) -> Dict[str, Any]:
     return task
 
 
-def update_task(task_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+def update_task(task_id: str, data: Dict[str, Any], *, create_repeat: bool = True) -> Dict[str, Any]:
     current = get_task(task_id)
     merged = {**current, **data}
     timestamp = now_iso()
@@ -2652,18 +2852,20 @@ def update_task(task_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
     else:
         schedule_task_reminder(updated)
     auto_sync_task_after_save(updated, current)
-    if completed and not current["completed"] and validate_repeat_rule(merged.get("repeat_rule")) != "none":
+    if create_repeat and completed and not current["completed"] and validate_repeat_rule(merged.get("repeat_rule")) != "none":
         create_next_repeating_task({**merged, "completed": False})
     return updated
 
 
 def project_open_tasks(project_id: Any) -> List[Dict[str, Any]]:
     project = get_project(project_id)
-    return [
+    tasks = [
         task
         for task in list_tasks({})
         if not task["completed"] and not task.get("archived") and str(task.get("project_id") or "") == str(project["id"])
     ]
+    tasks.sort(key=lambda task: (int(task.get("project_order") or 0), str(task.get("id") or "")))
+    return tasks
 
 
 def reorder_project_tasks(project_id: Any, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -2687,7 +2889,12 @@ def reorder_project_tasks(project_id: Any, data: Dict[str, Any]) -> Dict[str, An
     for index, task_id in enumerate(task_ids, start=1):
         task = {**task_map[task_id], "project_order": index * 10, "updated_at": timestamp}
         tasks_table.put_item(Item=task)
-    return {"ok": True, "tasks": project_open_tasks(project["id"])}
+    projects_table.put_item(Item={**project, "updated_at": timestamp})
+    return {
+        "ok": True,
+        "project": get_project(project["id"]),
+        "tasks": project_open_tasks(project["id"]),
+    }
 
 
 def create_next_repeating_task(task: Dict[str, Any]) -> None:

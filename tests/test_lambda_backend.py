@@ -28,6 +28,13 @@ lambda_backend = importlib.import_module("lambda_backend")
 
 
 class LambdaBackendHelperTests(unittest.TestCase):
+    def setUp(self):
+        self.mcp_change_patch = unittest.mock.patch.object(lambda_backend, "mcp_record_change")
+        self.mcp_record_change = self.mcp_change_patch.start()
+
+    def tearDown(self):
+        self.mcp_change_patch.stop()
+
     def test_mcp_initialize_and_tool_list_follow_json_rpc(self):
         initialize = lambda_backend.handle_mcp_request(
             {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
@@ -57,6 +64,119 @@ class LambdaBackendHelperTests(unittest.TestCase):
         self.assertNotIn("google_sync_hash", view)
         self.assertNotIn("priority", view)
         self.assertEqual(view["reminder_at"], "2026-07-19T09:00")
+
+    def test_mcp_lists_and_undoes_a_recorded_task_change(self):
+        task = {
+            "id": "task-undo",
+            "title": "New title",
+            "completed": False,
+            "archived": False,
+            "updated_at": "2026-07-18T14:00:00Z",
+        }
+        change = {
+            "change_id": "change-1",
+            "entity_type": "task",
+            "entity_id": task["id"],
+            "tool_name": "update_task_details",
+            "before": {"title": "Old title", "completed": False, "archived": False},
+            "after": {"title": "New title", "completed": False, "archived": False},
+            "created_at": "2026-07-18T13:59:00Z",
+        }
+        with unittest.mock.patch.object(
+            lambda_backend, "get_task", return_value=task
+        ), unittest.mock.patch.object(
+            lambda_backend, "mcp_list_changes", return_value=[change]
+        ):
+            listed = lambda_backend.call_mcp_tool(
+                "list_task_changes", {"task_id": task["id"], "limit": 10}
+            )
+        self.assertEqual(listed["structuredContent"]["changes"][0]["change_id"], "change-1")
+
+        restored = {**task, "title": "Old title", "updated_at": "2026-07-18T14:01:00Z"}
+        arguments = {
+            "task_id": task["id"],
+            "change_id": "change-1",
+            "expected_updated_at": task["updated_at"],
+            "idempotency_key": "undo-task-change-1",
+        }
+        with unittest.mock.patch.object(
+            lambda_backend, "mcp_idempotent", side_effect=lambda _name, _key, operation: operation()
+        ), unittest.mock.patch.object(
+            lambda_backend, "get_task", return_value=task
+        ), unittest.mock.patch.object(
+            lambda_backend, "mcp_get_change", return_value=change
+        ), unittest.mock.patch.object(
+            lambda_backend, "update_task", return_value=restored
+        ) as update_task:
+            result = lambda_backend.call_mcp_tool("undo_task_change", arguments)
+
+        update_task.assert_called_once_with(task["id"], change["before"], create_repeat=False)
+        self.assertEqual(result["structuredContent"]["task"]["title"], "Old title")
+        self.assertEqual(self.mcp_record_change.call_args.kwargs["extra"], {"undo_of": "change-1"})
+
+    def test_mcp_undoes_a_recorded_project_task_order(self):
+        project = {
+            "id": "project-undo",
+            "name": "Launch",
+            "status": "active",
+            "updated_at": "2026-07-18T15:00:00Z",
+        }
+        change = {
+            "change_id": "project-change-1",
+            "before": {"name": "Launch", "status": "active"},
+            "after": {"name": "Launch", "status": "active"},
+            "before_task_ids": ["task-a", "task-b"],
+            "after_task_ids": ["task-b", "task-a"],
+        }
+        restored_project = {**project, "updated_at": "2026-07-18T15:01:00Z"}
+        restored_tasks = [
+            {"id": "task-a", "title": "A", "project_order": 10},
+            {"id": "task-b", "title": "B", "project_order": 20},
+        ]
+        arguments = {
+            "project_id": project["id"],
+            "change_id": change["change_id"],
+            "expected_updated_at": project["updated_at"],
+            "idempotency_key": "undo-project-order-1",
+        }
+        with unittest.mock.patch.object(
+            lambda_backend, "mcp_idempotent", side_effect=lambda _name, _key, operation: operation()
+        ), unittest.mock.patch.object(
+            lambda_backend, "get_project", return_value=project
+        ), unittest.mock.patch.object(
+            lambda_backend, "mcp_get_change", return_value=change
+        ), unittest.mock.patch.object(
+            lambda_backend,
+            "reorder_project_tasks",
+            return_value={"project": restored_project, "tasks": restored_tasks},
+        ) as reorder:
+            result = lambda_backend.call_mcp_tool("undo_project_change", arguments)
+
+        reorder.assert_called_once_with(project["id"], {"task_ids": ["task-a", "task-b"]})
+        self.assertEqual([task["id"] for task in result["structuredContent"]["tasks"]], ["task-a", "task-b"])
+        self.assertEqual(
+            self.mcp_record_change.call_args.kwargs["extra"],
+            {
+                "before_task_ids": ["task-b", "task-a"],
+                "after_task_ids": ["task-a", "task-b"],
+                "undo_of": "project-change-1",
+            },
+        )
+
+    def test_mcp_history_snapshots_exclude_provider_and_account_fields(self):
+        snapshot = lambda_backend.mcp_snapshot(
+            {
+                "title": "Safe",
+                "notes": "Planning only",
+                "google_task_id": "provider-id",
+                "access_token": "secret",
+            },
+            lambda_backend.MCP_TASK_SNAPSHOT_FIELDS,
+        )
+
+        self.assertEqual(snapshot["title"], "Safe")
+        self.assertNotIn("google_task_id", snapshot)
+        self.assertNotIn("access_token", snapshot)
 
     def test_mcp_archive_accepts_open_task_and_preserves_revision_check(self):
         open_task = {

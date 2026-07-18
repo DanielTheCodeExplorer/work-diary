@@ -77,6 +77,7 @@ Globals:
         PROJECTS_TABLE: !Ref ProjectsTable
         PUSH_SUBSCRIPTIONS_TABLE: !Ref PushSubscriptionsTable
         GOOGLE_INTEGRATION_TABLE: !Ref GoogleIntegrationTable
+        MCP_CHANGES_TABLE: !Ref McpChangesTable
         UPLOADS_BUCKET: !Ref UploadsBucket
         UPLOADS_PREFIX: uploads/
         REMINDER_SCHEDULE_GROUP: !Ref ReminderScheduleGroup
@@ -203,6 +204,29 @@ Resources:
         - AttributeName: id
           KeyType: HASH
 
+  McpChangesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: WorkDiaryMcpChanges
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      AttributeDefinitions:
+        - AttributeName: entity_key
+          AttributeType: S
+        - AttributeName: change_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: entity_key
+          KeyType: HASH
+        - AttributeName: change_id
+          KeyType: RANGE
+
   UploadsBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
@@ -279,6 +303,7 @@ Resources:
                   - !GetAtt ProjectsTable.Arn
                   - !GetAtt PushSubscriptionsTable.Arn
                   - !GetAtt GoogleIntegrationTable.Arn
+                  - !GetAtt McpChangesTable.Arn
               - Effect: Allow
                 Action:
                   - s3:PutObject
@@ -383,6 +408,9 @@ Outputs:
   GoogleIntegrationTableName:
     Description: DynamoDB Google integration table name
     Value: !Ref GoogleIntegrationTable
+  McpChangesTableName:
+    Description: DynamoDB MCP change history table name
+    Value: !Ref McpChangesTable
   UploadsBucketName:
     Description: S3 bucket for uploaded image evidence
     Value: !Ref UploadsBucket
