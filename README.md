@@ -211,13 +211,16 @@ sqlite3 data/work_diary.sqlite3 ".backup backups/work_diary-$(date +%Y%m%d-%H%M%
 - Multiple evidence links per diary entry.
 - Evidence data model prepared for future Google Drive API, AWS S3 upload, and file attachment metadata.
 
-## Planned ChatGPT Integration
+## Private ChatGPT Integration
 
-The planned private ChatGPT app will use a dedicated authenticated MCP service
-to read, create, complete, and reschedule owner-scoped tasks. It is intentionally
-not implemented on top of the current shared password/session boundary. See
-[`MCP_INTEGRATION.md`](MCP_INTEGRATION.md) for the proposed tools, security
-requirements, daily-planning flow, and release gates.
+The deployed Lambda exposes a private MCP server at `/mcp`. It uses a separate
+OAuth 2.1 + PKCE login boundary and does not accept the browser session cookie.
+ChatGPT can search and fetch tasks, review task lists, and—after confirmation—
+create, complete, or reschedule tasks.
+
+The MCP task tools do not call the OpenAI API, so they do not create separate
+OpenAI API token charges. See [`MCP_INTEGRATION.md`](MCP_INTEGRATION.md) for the
+deployment, ChatGPT Developer Mode setup, tool contract, and security limits.
 
 ## Evidence Types
 
