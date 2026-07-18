@@ -1,5 +1,6 @@
-const APP_ASSET_VERSION = "20260718-production-hardening";
+const APP_ASSET_VERSION = "20260718-responsive-networking";
 const CACHE_NAME = `work-diary-shell-${APP_ASSET_VERSION}`;
+const NETWORK_TIMEOUT_MS = 5000;
 const APP_SHELL = [
   "/",
   "/login.html",
@@ -34,6 +35,8 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (
+    event.request.method !== "GET"
+    ||
     url.origin !== self.location.origin
     || url.pathname.startsWith("/api/")
     || url.pathname === "/config.js"
@@ -41,18 +44,54 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        if (event.request.method === "GET" && response.ok) {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-        }
-        return response;
-      })
-      .catch(() => caches.match(event.request))
-  );
+  const isVersionedAsset = url.pathname.startsWith("/static/")
+    && url.searchParams.get("v") === APP_ASSET_VERSION;
+
+  if (isVersionedAsset) {
+    event.respondWith(
+      caches.match(event.request).then((cached) => cached || fetchAndCache(event.request))
+    );
+    return;
+  }
+
+  event.respondWith(networkFirst(event.request));
 });
+
+async function fetchWithTimeout(request) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), NETWORK_TIMEOUT_MS);
+  try {
+    return await fetch(request, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchAndCache(request) {
+  const response = await fetchWithTimeout(request);
+  if (response.ok) {
+    const cache = await caches.open(CACHE_NAME);
+    await cache.put(request, response.clone());
+  }
+  return response;
+}
+
+async function networkFirst(request) {
+  try {
+    return await fetchAndCache(request);
+  } catch {
+    const cached = await caches.match(request);
+    if (cached) return cached;
+    if (request.mode === "navigate") {
+      const shell = await caches.match("/");
+      if (shell) return shell;
+    }
+    return new Response("Work Diary is temporarily unavailable.", {
+      status: 503,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  }
+}
 
 self.addEventListener("push", (event) => {
   let payload = {};

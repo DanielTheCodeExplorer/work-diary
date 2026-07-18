@@ -61,7 +61,8 @@ const on = (selector, event, handler, root = document) => {
   return element;
 };
 const API_BASE_URL = window.API_BASE_URL || "";
-const APP_ASSET_VERSION = "20260718-production-hardening";
+const APP_ASSET_VERSION = "20260718-responsive-networking";
+const API_REQUEST_TIMEOUT_MS = 10000;
 const SETTINGS_KEY = "workDiarySettings";
 const HIDDEN_DASHBOARD_TASKS_KEY = "workDiaryHiddenDashboardTasks";
 const HIDDEN_DASHBOARD_ENTRIES_KEY = "workDiaryHiddenDashboardEntries";
@@ -239,11 +240,19 @@ async function api(path, options = {}) {
   if (options.body) {
     request.body = JSON.stringify(options.body);
   }
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), options.timeoutMs || API_REQUEST_TIMEOUT_MS);
+  request.signal = controller.signal;
   let response;
   try {
     response = await fetch(`${API_BASE_URL}${path}`, request);
   } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("The request took too long. Check your connection and try again.", { cause: error });
+    }
     throw new Error("The server could not be reached. Check your connection and try again.", { cause: error });
+  } finally {
+    window.clearTimeout(timeout);
   }
   const responseText = await response.text();
   let payload = {};

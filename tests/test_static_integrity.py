@@ -73,6 +73,26 @@ class StaticIntegrityTests(unittest.TestCase):
         self.assertIn(f"/config.js?v={app_version}", read_static("index.html"))
         self.assertIn(f"/config.js?v={app_version}", read_static("login.html"))
 
+    def test_browser_requests_have_bounded_waits(self):
+        app_source = read_static("app.js")
+        login_source = read_static("login.js")
+
+        self.assertIn("API_REQUEST_TIMEOUT_MS", app_source)
+        self.assertIn("new AbortController()", app_source)
+        self.assertIn("controller.abort()", app_source)
+        self.assertIn("API_REQUEST_TIMEOUT_MS", login_source)
+        self.assertIn("new AbortController()", login_source)
+        self.assertIn("controller.abort()", login_source)
+
+    def test_service_worker_prefers_cached_versioned_assets_and_times_out_network(self):
+        worker_source = read_static("service-worker.js")
+
+        self.assertIn("NETWORK_TIMEOUT_MS", worker_source)
+        self.assertIn('url.pathname.startsWith("/static/")', worker_source)
+        self.assertIn("cached || fetchAndCache", worker_source)
+        self.assertIn("controller.abort()", worker_source)
+        self.assertIn('caches.match("/")', worker_source)
+
 
 if __name__ == "__main__":
     unittest.main()
