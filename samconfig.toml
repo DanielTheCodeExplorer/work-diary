@@ -3,11 +3,11 @@ version = 0.1
 [default.deploy.parameters]
 stack_name = "work-diary-stack"
 resolve_s3 = true
-s3_prefix = "work-diary"
-region = "eu-west-2"
+s3_prefix = "work-diary-stack"
 confirm_changeset = true
 capabilities = "CAPABILITY_IAM"
 image_repositories = []
+disable_rollback = false
 
 [default.global.parameters]
 region = "eu-west-2"

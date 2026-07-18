@@ -9,11 +9,11 @@
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
-    <string>/Users/danza/Documents/CV Updater/app.py</string>
+    <string>/absolute/path/to/work-diary/app.py</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/danza/Documents/CV Updater</string>
+  <string>/absolute/path/to/work-diary</string>
 
   <key>RunAtLoad</key>
   <true/>

@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v=20260718-production-hardening">
   </head>
   <body>
     <header class="topbar" id="topbar">
@@ -56,8 +56,7 @@
       <nav class="tabs" aria-label="Primary views">
         <button class="tab active" type="button" data-view="dashboard">Dashboard</button>
         <button class="tab" type="button" data-view="planner">Planner</button>
-        <button class="tab" type="button" data-view="diary">CV</button>
-        <button class="tab" type="button" data-view="achievements">Achievements</button>
+        <button class="tab" type="button" data-view="workhub">Work Hub</button>
       </nav>
     </header>
 
@@ -71,6 +70,22 @@
         </div>
 
         <section class="overview-grid" id="overviewCards" aria-label="Today summary"></section>
+
+        <section class="dashboard-panel achievement-search-panel" aria-label="Search achievements">
+          <div class="todo-head">
+            <div>
+              <p class="eyebrow">Achievement memory</p>
+              <h2>Find past work</h2>
+            </div>
+          </div>
+          <div class="searchbar dashboard-searchbar">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="m21 21-4.3-4.3M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4z"></path>
+            </svg>
+            <input id="dashboardAchievementSearchInput" type="search" placeholder="Search projects, achievements, skills">
+          </div>
+          <div class="achievement-memory-results" id="dashboardAchievementSearchResults"></div>
+        </section>
 
         <section class="dashboard-panel" aria-label="Recent progress">
           <div class="todo-head">
@@ -101,46 +116,119 @@
               <p class="eyebrow">Open work</p>
               <h2>Planner</h2>
             </div>
-            <span class="todo-count" id="todoCount">0 open</span>
+            <div class="section-actions">
+              <button class="ghost-button compact-button" type="button" id="viewIncompleteTasks">View incomplete</button>
+              <span class="todo-count" id="todoCount">0 open</span>
+            </div>
           </div>
-          <form class="task-form" id="taskForm">
-            <label class="task-title-field">
-              Task
-              <input id="taskTitle" type="text" placeholder="Add a task" autocomplete="off" required>
-            </label>
-            <label>
-              Due date
-              <input id="taskDueDate" type="date">
-            </label>
-            <label>
-              Due time
-              <input id="taskDueTime" type="time">
-            </label>
-            <label>
-              Priority
-              <select id="taskPriority">
-                <option value="">No priority</option>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-              </select>
-            </label>
-            <label>
-              Repeat
-              <select id="taskRepeatRule">
-                <option value="none">No repeat</option>
-                <option value="interval">Every set days</option>
-              </select>
-            </label>
-            <label class="repeat-option hidden" id="taskRepeatIntervalWrap">
-              Wait days
-              <input id="taskRepeatIntervalDays" type="number" min="1" max="3650" step="1" value="1" inputmode="numeric">
-            </label>
-            <label class="repeat-option hidden" id="taskRepeatUntilWrap">
-              Stop after
-              <input id="taskRepeatUntil" type="date">
-            </label>
-            <button class="primary-button" type="submit">Add</button>
+          <form class="task-form quick-task-form" id="taskForm">
+            <div class="task-quick-row">
+              <label class="task-title-field">
+                Task
+                <input id="taskTitle" type="text" maxlength="240" placeholder="Add a task" autocomplete="off" required>
+              </label>
+              <label class="task-due-field">
+                Date
+                <input id="taskDate" type="hidden">
+                <button class="date-select" type="button" data-date-target="taskDate" aria-label="Set date">
+                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                    <path d="M8 2v4M16 2v4"></path>
+                    <path d="M3 9h18"></path>
+                    <path d="M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"></path>
+                  </svg>
+                  <span id="taskDateLabel">No date</span>
+                </button>
+              </label>
+              <button class="primary-button task-add-button" type="submit">Add</button>
+            </div>
+            <div class="task-composer-actions">
+              <button class="advanced-toggle" type="button" id="toggleTaskAdvanced" aria-expanded="false" aria-controls="taskAdvancedFields">
+                <span>Advanced</span>
+                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                  <path d="M6 9l6 6 6-6"></path>
+                </svg>
+              </button>
+              <button class="ghost-button compact-button" type="button" id="clearTaskForm">Clear</button>
+            </div>
+            <div class="task-advanced hidden" id="taskAdvancedFields">
+              <label>
+                Start date
+                <input id="taskStartDate" type="hidden">
+                <button class="date-select" type="button" data-date-target="taskStartDate" aria-label="Set start date">
+                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                    <path d="M8 2v4M16 2v4"></path>
+                    <path d="M3 9h18"></path>
+                    <path d="M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"></path>
+                  </svg>
+                  <span id="taskStartDateLabel">No date</span>
+                </button>
+              </label>
+              <label>
+                End date
+                <input id="taskDueDate" type="hidden">
+                <button class="date-select" type="button" data-date-target="taskDueDate" aria-label="Set end date">
+                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                    <path d="M8 2v4M16 2v4"></path>
+                    <path d="M3 9h18"></path>
+                    <path d="M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"></path>
+                  </svg>
+                  <span id="taskEndDateLabel">No date</span>
+                </button>
+              </label>
+              <label>
+                Start time
+                <input id="taskStartTime" type="hidden">
+                <button class="time-select" type="button" data-time-target="taskStartTime" aria-label="Set start time">
+                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                    <path d="M12 6v6l4 2"></path>
+                    <path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"></path>
+                  </svg>
+                  <span id="taskStartTimeLabel">No time</span>
+                </button>
+              </label>
+              <label>
+                End time
+                <input id="taskDueTime" type="hidden">
+                <button class="time-select" type="button" data-time-target="taskDueTime" aria-label="Set end time">
+                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                    <path d="M12 6v6l4 2"></path>
+                    <path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"></path>
+                  </svg>
+                  <span id="taskDueTimeLabel">No time</span>
+                </button>
+              </label>
+              <label>
+                Project
+                <select id="taskProjectId"></select>
+              </label>
+              <label>
+                Repeat
+                <select id="taskRepeatRule">
+                  <option value="none">No repeat</option>
+                  <option value="interval">Every set days</option>
+                </select>
+              </label>
+              <label class="repeat-option hidden" id="taskRepeatIntervalWrap">
+                Wait days
+                <input id="taskRepeatIntervalDays" type="number" min="1" max="3650" step="1" value="1" inputmode="numeric">
+              </label>
+              <label class="repeat-option hidden" id="taskRepeatUntilWrap">
+                Stop after
+                <input id="taskRepeatUntil" type="hidden">
+                <button class="date-select" type="button" data-date-target="taskRepeatUntil" aria-label="Set repeat stop date">
+                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                    <path d="M8 2v4M16 2v4"></path>
+                    <path d="M3 9h18"></path>
+                    <path d="M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"></path>
+                  </svg>
+                  <span id="taskRepeatUntilLabel">No date</span>
+                </button>
+              </label>
+              <label class="task-notes-field">
+                Notes
+                <textarea id="taskNotes" rows="3" maxlength="20000" placeholder="Add context, instructions, or what done looks like"></textarea>
+              </label>
+            </div>
           </form>
           <div class="task-list" id="taskList"></div>
         </section>
@@ -160,55 +248,115 @@
         <div class="task-detail-list" id="taskDetailList"></div>
       </section>
 
-      <section class="view" id="diaryView" aria-labelledby="diaryHeading">
+      <section class="view" id="workhubView" aria-labelledby="workhubHeading">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Career evidence</p>
-            <h1 id="diaryHeading">CV</h1>
-          </div>
-          <div class="searchbar">
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path d="m21 21-4.3-4.3M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4z"></path>
-            </svg>
-            <input id="searchInput" type="search" placeholder="Search CV notes">
+            <p class="eyebrow">Projects and career log</p>
+            <h1 id="workhubHeading">Work Hub</h1>
           </div>
         </div>
 
-        <form class="quick-strip" id="inlineQuickForm">
-          <label for="inlineQuickNote">Journal entry</label>
-          <div class="journal-meta-row">
-            <label>
-              Date
-              <input id="inlineQuickDate" type="date">
-            </label>
-            <label>
-              Project
-              <input id="inlineQuickProject" type="text" placeholder="Optional">
-            </label>
-          </div>
-          <div class="quick-row">
-            <textarea id="inlineQuickNote" rows="5" placeholder="Write what happened, what you changed, what you learned, and what moved forward."></textarea>
-            <button class="primary-button" type="submit">Save journal</button>
-          </div>
-        </form>
-
-        <div class="entry-list" id="entryList"></div>
-      </section>
-
-      <section class="view" id="achievementsView" aria-labelledby="achievementsHeading">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Career log</p>
-            <h1 id="achievementsHeading">Achievements</h1>
-          </div>
-          <div class="searchbar">
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path d="m21 21-4.3-4.3M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4z"></path>
-            </svg>
-            <input id="achievementSearchInput" type="search" placeholder="Search achievements, projects, skills">
-          </div>
+        <div class="workhub-tabs" role="tablist" aria-label="Work Hub sections">
+          <button class="workhub-tab active" type="button" data-workhub-tab="projects">Projects</button>
+          <button class="workhub-tab" type="button" data-workhub-tab="cv">CV</button>
+          <button class="workhub-tab" type="button" data-workhub-tab="achievements">Achievements</button>
         </div>
-        <div class="achievement-list" id="achievementList"></div>
+
+        <section class="workhub-panel active" id="projectsPanel" data-workhub-panel="projects" aria-label="Projects">
+          <div class="project-workspace">
+            <section class="project-picker-card" aria-label="Choose project">
+              <label>
+                Search projects
+                <input id="projectSearchInput" type="search" placeholder="Find a project" autocomplete="off">
+              </label>
+              <button class="primary-button compact-button" type="button" id="newProjectButton">New project</button>
+            </section>
+
+            <form class="project-form hidden" id="projectForm">
+              <input id="projectId" type="hidden">
+              <input id="projectStatus" type="hidden" value="planned">
+              <input id="projectColor" type="hidden" value="#5DD4C0">
+              <div class="todo-head">
+                <div>
+                  <p class="eyebrow">Project planning</p>
+                  <h2 id="projectFormTitle">New project</h2>
+                </div>
+                <button class="ghost-button compact-button" type="button" id="clearProjectForm">Clear</button>
+              </div>
+              <label>
+                Name
+                <input id="projectName" type="text" placeholder="Portfolio rebuild" required>
+              </label>
+              <label>
+                Goal
+                <textarea id="projectGoal" rows="3" placeholder="What are you trying to achieve?"></textarea>
+              </label>
+              <label>
+                Deadline
+                <input id="projectDeadline" type="date">
+              </label>
+              <label>
+                Notes
+                <textarea id="projectNotes" rows="4" placeholder="Useful context, constraints, links, or decisions."></textarea>
+              </label>
+              <button class="primary-button full-width" type="submit">Save project</button>
+            </form>
+            <div class="project-list" id="projectList"></div>
+            <section class="project-detail" id="projectDetail" aria-label="Selected project"></section>
+          </div>
+        </section>
+
+        <section class="workhub-panel" id="cvPanel" data-workhub-panel="cv" aria-label="CV notes">
+          <div class="section-head compact-head">
+            <div>
+              <p class="eyebrow">Career evidence</p>
+              <h2>CV</h2>
+            </div>
+            <div class="searchbar">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="m21 21-4.3-4.3M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4z"></path>
+              </svg>
+              <input id="searchInput" type="search" placeholder="Search CV notes">
+            </div>
+          </div>
+
+          <form class="quick-strip" id="inlineQuickForm">
+            <label for="inlineQuickNote">CV note</label>
+            <div class="journal-meta-row">
+              <label>
+                Date
+                <input id="inlineQuickDate" type="date">
+              </label>
+              <label>
+                Project
+                <select id="inlineQuickProjectId"></select>
+                <input id="inlineQuickProject" type="hidden">
+              </label>
+            </div>
+            <div class="quick-row">
+              <textarea id="inlineQuickNote" rows="5" placeholder="Write what happened, what you changed, what you learned, and what moved forward."></textarea>
+              <button class="primary-button" type="submit">Save CV note</button>
+            </div>
+          </form>
+
+          <div class="entry-list" id="entryList"></div>
+        </section>
+
+        <section class="workhub-panel" id="achievementsPanel" data-workhub-panel="achievements" aria-label="Achievements">
+          <div class="section-head compact-head">
+            <div>
+              <p class="eyebrow">Career log</p>
+              <h2>Achievements</h2>
+            </div>
+            <div class="searchbar">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="m21 21-4.3-4.3M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4z"></path>
+              </svg>
+              <input id="achievementSearchInput" type="search" placeholder="Search achievements, projects, skills">
+            </div>
+          </div>
+          <div class="achievement-list" id="achievementList"></div>
+        </section>
       </section>
 
     </main>
@@ -229,27 +377,16 @@
         </svg>
         <span>Planner</span>
       </button>
-      <button class="tab" type="button" data-view="diary">
+      <button class="tab" type="button" data-view="workhub">
         <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
-          <path d="M4 19.5V5a2 2 0 0 1 2-2h11l3 3v13.5a1.5 1.5 0 0 1-1.5 1.5H6a2 2 0 0 1-2-2z"></path>
-          <path d="M16 3v4h4"></path>
-          <path d="M8 11h8M8 15h8"></path>
+          <path d="M4 19V5a2 2 0 0 1 2-2h6l2 2h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"></path>
+          <path d="M8 11h8M8 15h6"></path>
         </svg>
-        <span>CV</span>
-      </button>
-      <button class="tab" type="button" data-view="achievements">
-        <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
-          <path d="M8 3h8v6a4 4 0 0 1-8 0z"></path>
-          <path d="M12 13v5"></path>
-          <path d="M8 21h8"></path>
-          <path d="M6 5H4a3 3 0 0 0 3 4"></path>
-          <path d="M18 5h2a3 3 0 0 1-3 4"></path>
-        </svg>
-        <span>Achievements</span>
+        <span>Work Hub</span>
       </button>
     </nav>
 
-    <aside class="drawer hidden" id="entryDrawer" aria-hidden="true">
+    <aside class="drawer hidden" id="entryDrawer" role="dialog" aria-modal="true" aria-hidden="true">
       <div class="drawer-backdrop" data-action="close-drawer"></div>
       <section class="drawer-panel" aria-labelledby="drawerTitle">
         <header class="drawer-head">
@@ -296,7 +433,8 @@
               </label>
               <label>
                 Project
-                <input id="drawerPhotoProject" type="text" placeholder="Optional">
+                <select id="drawerPhotoProjectId"></select>
+                <input id="drawerPhotoProject" type="hidden">
               </label>
             </div>
             <button class="primary-button full-width" type="submit">Save image evidence</button>
@@ -307,28 +445,57 @@
           <input id="editTaskId" type="hidden">
           <label>
             Task name
-            <input id="editTaskTitle" type="text" autocomplete="off" required>
+            <input id="editTaskTitle" type="text" maxlength="240" autocomplete="off" required>
           </label>
           <div class="compact-grid">
             <label>
-              Date
-              <input id="editTaskDueDate" type="date">
+              Start date
+              <input id="editTaskStartDate" type="hidden">
+              <button class="date-select" type="button" data-date-target="editTaskStartDate" aria-label="Set task start date">
+                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                  <path d="M8 2v4M16 2v4"></path>
+                  <path d="M3 9h18"></path>
+                  <path d="M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"></path>
+                </svg>
+                <span id="editTaskStartDateLabel">No date</span>
+              </button>
             </label>
             <label>
-              Time
-              <input id="editTaskDueTime" type="time">
+              End date
+              <input id="editTaskDueDate" type="hidden">
+              <button class="date-select" type="button" data-date-target="editTaskDueDate" aria-label="Set task end date">
+                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                  <path d="M8 2v4M16 2v4"></path>
+                  <path d="M3 9h18"></path>
+                  <path d="M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"></path>
+                </svg>
+                <span id="editTaskDueDateLabel">No date</span>
+              </button>
+            </label>
+            <label>
+              Start time
+              <input id="editTaskStartTime" type="hidden">
+              <button class="time-select" type="button" data-time-target="editTaskStartTime" aria-label="Set task start time">
+                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                  <path d="M12 6v6l4 2"></path>
+                  <path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"></path>
+                </svg>
+                <span id="editTaskStartTimeLabel">No time</span>
+              </button>
+            </label>
+            <label>
+              End time
+              <input id="editTaskDueTime" type="hidden">
+              <button class="time-select" type="button" data-time-target="editTaskDueTime" aria-label="Set task end time">
+                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                  <path d="M12 6v6l4 2"></path>
+                  <path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"></path>
+                </svg>
+                <span id="editTaskDueTimeLabel">No time</span>
+              </button>
             </label>
           </div>
           <div class="compact-grid">
-            <label>
-              Priority
-              <select id="editTaskPriority">
-                <option value="">No priority</option>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-              </select>
-            </label>
             <label>
               Repeat
               <select id="editTaskRepeatRule">
@@ -342,16 +509,25 @@
             </label>
             <label class="repeat-option hidden" id="editTaskRepeatUntilWrap">
               Stop after
-              <input id="editTaskRepeatUntil" type="date">
+              <input id="editTaskRepeatUntil" type="hidden">
+              <button class="date-select" type="button" data-date-target="editTaskRepeatUntil" aria-label="Set repeat stop date">
+                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                  <path d="M8 2v4M16 2v4"></path>
+                  <path d="M3 9h18"></path>
+                  <path d="M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"></path>
+                </svg>
+                <span id="editTaskRepeatUntilLabel">No date</span>
+              </button>
             </label>
           </div>
           <label>
             Project or list
-            <input id="editTaskProject" type="text" placeholder="Final Project">
+            <select id="editTaskProjectId"></select>
+            <input id="editTaskProject" type="hidden">
           </label>
           <label>
             Location
-            <input id="editTaskLocation" type="text" placeholder="Library">
+            <input id="editTaskLocation" type="text" maxlength="500" placeholder="Library">
           </label>
           <label>
             Reminder
@@ -359,7 +535,7 @@
           </label>
           <label>
             Notes
-            <textarea id="editTaskNotes" rows="4" placeholder="Anything useful to remember."></textarea>
+            <textarea id="editTaskNotes" rows="4" maxlength="20000" placeholder="Anything useful to remember."></textarea>
           </label>
           <label class="toggle-row">
             <input id="editTaskCompleted" type="checkbox">
@@ -399,7 +575,8 @@
           </label>
           <label>
             Project
-            <input id="entryProject" type="text" placeholder="Client portal">
+            <select id="entryProjectId"></select>
+            <input id="entryProject" type="hidden">
           </label>
           <label>
             Skills used
@@ -442,7 +619,7 @@
       </section>
     </aside>
 
-    <aside class="drawer utility-drawer hidden" id="calendarDrawer" aria-hidden="true">
+    <aside class="drawer utility-drawer hidden" id="calendarDrawer" role="dialog" aria-modal="true" aria-hidden="true">
       <div class="drawer-backdrop" data-action="close-calendar"></div>
       <section class="drawer-panel utility-panel" aria-labelledby="calendarTitle">
         <header class="drawer-head">
@@ -471,6 +648,10 @@
             </svg>
           </button>
         </div>
+        <div class="calendar-quick-actions">
+          <button type="button" id="calendarToday">Today</button>
+          <button type="button" id="calendarTomorrow">Tomorrow</button>
+        </div>
         <div class="calendar-weekdays" aria-hidden="true">
           <span>Sun</span>
           <span>Mon</span>
@@ -485,7 +666,7 @@
       </section>
     </aside>
 
-    <aside class="drawer utility-drawer hidden" id="settingsDrawer" aria-hidden="true">
+    <aside class="drawer utility-drawer hidden" id="settingsDrawer" role="dialog" aria-modal="true" aria-hidden="true">
       <div class="drawer-backdrop" data-action="close-settings"></div>
       <section class="drawer-panel utility-panel" aria-labelledby="settingsTitle">
         <header class="drawer-head">
@@ -517,8 +698,7 @@
             <select id="settingDefaultView">
               <option value="dashboard">Dashboard</option>
               <option value="planner">Planner</option>
-              <option value="diary">CV</option>
-              <option value="achievements">Achievements</option>
+              <option value="workhub">Work Hub</option>
             </select>
           </label>
           <label class="toggle-row">
@@ -529,8 +709,86 @@
             <input id="settingReducedMotion" type="checkbox">
             <span>Reduce motion</span>
           </label>
+          <section class="settings-section" aria-labelledby="reminderSettingsTitle">
+            <div>
+              <p class="eyebrow">Phone</p>
+              <h3 id="reminderSettingsTitle">Reminders</h3>
+            </div>
+            <label class="toggle-row">
+              <input id="phoneReminderToggle" type="checkbox">
+              <span>Phone reminders</span>
+            </label>
+            <p class="settings-status" id="pushStatus">Checking reminder support...</p>
+            <button class="secondary-button" type="button" id="sendTestReminder">Send test reminder</button>
+          </section>
+          <section class="settings-section" aria-labelledby="googleSettingsTitle">
+            <div>
+              <p class="eyebrow">Google</p>
+              <h3 id="googleSettingsTitle">Calendar & Tasks</h3>
+            </div>
+            <p class="settings-status" id="googleIntegrationStatus">Checking Google sync...</p>
+            <div class="integration-actions">
+              <button class="secondary-button" type="button" id="connectGoogle">Connect Google</button>
+              <button class="ghost-button" type="button" id="disconnectGoogle">Disconnect</button>
+              <button class="ghost-button hidden" type="button" id="retryGoogleSync">Retry failed sync</button>
+            </div>
+          </section>
           <button class="ghost-button" type="button" id="resetSettings">Reset settings</button>
         </form>
+      </section>
+    </aside>
+
+    <aside class="drawer utility-drawer time-drawer hidden" id="timeDrawer" role="dialog" aria-modal="true" aria-hidden="true">
+      <div class="drawer-backdrop" data-action="close-time"></div>
+      <section class="drawer-panel utility-panel clock-panel" aria-labelledby="timeTitle">
+        <header class="drawer-head">
+          <div>
+            <p class="eyebrow">Clock</p>
+            <h2 id="timeTitle">Set time</h2>
+          </div>
+          <button class="icon-button" type="button" data-action="close-time" aria-label="Close time picker" title="Close">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M6 6l12 12M18 6 6 18"></path>
+            </svg>
+          </button>
+        </header>
+        <div class="clock-preview" aria-live="polite">
+          <span id="timePreview">09:00</span>
+          <small id="timePreviewPeriod">Europe/London</small>
+        </div>
+        <div class="wheel-picker time-wheel" id="timeWheel" aria-label="Time wheel"></div>
+        <div class="form-actions">
+          <button class="ghost-button" type="button" id="clearTime">Clear</button>
+          <button class="secondary-button" type="button" data-action="close-time">Cancel</button>
+          <button class="primary-button" type="button" id="setTime">Set</button>
+        </div>
+      </section>
+    </aside>
+
+    <aside class="drawer utility-drawer date-drawer hidden" id="dateDrawer" role="dialog" aria-modal="true" aria-hidden="true">
+      <div class="drawer-backdrop" data-action="close-date"></div>
+      <section class="drawer-panel utility-panel clock-panel" aria-labelledby="dateTitle">
+        <header class="drawer-head">
+          <div>
+            <p class="eyebrow">Date</p>
+            <h2 id="dateTitle">Set date</h2>
+          </div>
+          <button class="icon-button" type="button" data-action="close-date" aria-label="Close date picker" title="Close">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M6 6l12 12M18 6 6 18"></path>
+            </svg>
+          </button>
+        </header>
+        <div class="clock-preview date-preview" aria-live="polite">
+          <span id="datePreview">Today</span>
+          <small id="datePreviewDetail"></small>
+        </div>
+        <div class="wheel-picker date-wheel" id="dateWheel" aria-label="Date wheel"></div>
+        <div class="form-actions">
+          <button class="ghost-button" type="button" id="clearDate">Clear</button>
+          <button class="secondary-button" type="button" data-action="close-date">Cancel</button>
+          <button class="primary-button" type="button" id="setDate">Set</button>
+        </div>
       </section>
     </aside>
 
@@ -543,9 +801,12 @@
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
 
+    <script src="/config.js?v=20260718-production-hardening"></script>
     <script>
-      window.API_BASE_URL = "https://xjs2kilr31.execute-api.eu-west-2.amazonaws.com";
+      window.API_BASE_URL = ["localhost", "127.0.0.1"].includes(window.location.hostname)
+        ? ""
+        : (window.WORK_DIARY_CONFIG?.apiBaseUrl || "");
     </script>
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=20260718-production-hardening"></script>
   </body>
 </html>

@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v=20260718-production-hardening">
   </head>
   <body class="login-body">
     <main class="login-shell">
@@ -32,9 +32,12 @@
         <p class="login-error" id="loginError" role="alert"></p>
       </section>
     </main>
+    <script src="/config.js?v=20260718-production-hardening"></script>
     <script>
-      window.API_BASE_URL = "https://xjs2kilr31.execute-api.eu-west-2.amazonaws.com";
+      window.API_BASE_URL = ["localhost", "127.0.0.1"].includes(window.location.hostname)
+        ? ""
+        : (window.WORK_DIARY_CONFIG?.apiBaseUrl || "");
     </script>
-    <script src="/static/login.js"></script>
+    <script src="/static/login.js?v=20260718-production-hardening"></script>
   </body>
 </html>

@@ -1,6 +1,12 @@
-# Work Diary MVP
+# Work Diary
 
 A local-first work tracker for planning tasks, journaling progress, attaching evidence links, and turning diary entries into career achievements.
+
+> **Deployment boundary:** the current authentication and data model are designed
+> for one person (or one trusted household/team deployment). Do not onboard
+> unrelated customers into the same stack: tasks, integrations, and push
+> subscriptions are not tenant-isolated yet. A commercial multi-user release
+> requires managed identities and owner-scoped records first.
 
 ## Run
 
@@ -11,6 +17,14 @@ python3 app.py
 Open `http://127.0.0.1:8000`.
 
 The app creates a SQLite database at `data/work_diary.sqlite3`.
+
+Run the complete dependency-free test suite with:
+
+```bash
+python3 -m unittest discover -s tests -v
+node --check static/app.js
+node --check static/login.js
+```
 
 ## OpenAI API Key
 
@@ -44,15 +58,37 @@ Required environment variables for Lambda:
 - `ENTRIES_TABLE`
 - `EVIDENCE_TABLE`
 - `ACHIEVEMENTS_TABLE`
+- `GOOGLE_INTEGRATION_TABLE`
+- `GOOGLE_CLIENT_ID` (optional until Google sync is enabled)
+- `GOOGLE_CLIENT_SECRET` (optional until Google sync is enabled)
+- `GOOGLE_REDIRECT_URI` (optional until Google sync is enabled)
+- `APP_FRONTEND_URL` (optional; used after Google OAuth)
 
 The deployed static pages set `window.API_BASE_URL` to the API Gateway endpoint
 so `/api/*` calls go to Lambda from the CloudFront site.
 
-### Current AWS URLs
+## Google Calendar and Tasks Sync
 
-- API Gateway: `https://xjs2kilr31.execute-api.eu-west-2.amazonaws.com`
-- CloudFront: `https://d1ge7tepdgxhnw.cloudfront.net/`
-- S3 bucket: `work-diary-static-1780521024`
+Work Diary can automatically sync Planner tasks to Google after you connect
+Google in Settings:
+
+- Tasks with a start or end date sync to a dedicated Google Calendar named `Work Diary`.
+- Tasks without any date sync to a Google Tasks list named `Work Diary`.
+- Work Diary stays the source of truth; local task saves are not blocked if
+  Google is temporarily unavailable.
+
+To enable it, create a Google OAuth web client with Calendar API and Tasks API
+enabled, then set:
+
+```bash
+GOOGLE_CLIENT_ID=your-client-id
+GOOGLE_CLIENT_SECRET=your-client-secret
+GOOGLE_REDIRECT_URI=https://your-api.example.com/api/integrations/google/callback
+APP_FRONTEND_URL=https://your-frontend.example.com/
+```
+
+For local testing, `GOOGLE_REDIRECT_URI` should point at the local backend
+callback, for example `http://127.0.0.1:8000/api/integrations/google/callback`.
 
 After backend or template changes, deploy the existing SAM stack first:
 
@@ -63,13 +99,19 @@ sam deploy --guided
 
 Use `work-diary-stack` as the stack name and `eu-west-2` as the region.
 
-After frontend changes, upload and invalidate CloudFront:
+After frontend changes, inject the environment-specific API origin, upload both
+static paths, and invalidate CloudFront with the deployment script:
 
 ```bash
-aws s3 sync static/ s3://work-diary-static-1780521024/ --delete
-aws s3 sync static/ s3://work-diary-static-1780521024/static --delete
-aws cloudfront create-invalidation --distribution-id EILSICXWG9CEK --paths "/*"
+export WORK_DIARY_STATIC_BUCKET=your-static-bucket
+export WORK_DIARY_DISTRIBUTION_ID=your-cloudfront-distribution-id
+export WORK_DIARY_API_BASE_URL=https://your-api.example.com
+scripts/deploy_frontend.sh
 ```
+
+The committed `static/config.js` is intentionally environment-neutral. The
+deployment script generates a temporary production copy, so account-specific
+URLs never need to be committed.
 
 ## Password Login
 
@@ -120,6 +162,8 @@ install the official Tailscale app first and enable its command-line tool.
 ## Start Automatically On This Mac
 
 A launchd template is included at `deploy/uk.co.workdiary.app.plist.example`.
+Replace its two `/absolute/path/to/work-diary` placeholders with the checkout's
+actual absolute path before installing it.
 
 Install it with:
 
@@ -153,18 +197,27 @@ mkdir -p backups
 sqlite3 data/work_diary.sqlite3 ".backup backups/work_diary-$(date +%Y%m%d-%H%M%S).sqlite3"
 ```
 
-## MVP Scope
+## Product Scope
 
 - Quick log mode for rough notes.
 - Four mobile-first sections: Dashboard, Planner, Diary, and Achievements.
 - Dashboard summary widgets for open tasks, due today, diary entries this week, achievements this week, and recent progress.
 - Dark planner-style task list with Inbox, Today, and Upcoming boxes plus full list views for each box.
-- Planner tasks can include due date, time, reminder, repeat rule, priority, project/list, location, and notes.
+- Planner tasks can include start/end dates and times, a reminder, repeat rule, project/list, location, and notes.
+- Planner tasks can automatically sync dated tasks to Google Calendar and undated tasks to Google Tasks.
 - The bottom plus action is reserved for image evidence with optional notes.
 - Diary entries support free-form journal notes plus detailed fields for date, title, what I did, project, skills, outcome, tags, difficulty, reflection notes, and CV bullet draft.
 - Achievements stores newest-first career bullets generated from diary entries and completed-task logs.
 - Multiple evidence links per diary entry.
 - Evidence data model prepared for future Google Drive API, AWS S3 upload, and file attachment metadata.
+
+## Planned ChatGPT Integration
+
+The planned private ChatGPT app will use a dedicated authenticated MCP service
+to read, create, complete, and reschedule owner-scoped tasks. It is intentionally
+not implemented on top of the current shared password/session boundary. See
+[`MCP_INTEGRATION.md`](MCP_INTEGRATION.md) for the proposed tools, security
+requirements, daily-planning flow, and release gates.
 
 ## Evidence Types
 

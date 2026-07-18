@@ -16,6 +16,36 @@ Parameters:
     NoEcho: true
     Description: OpenAI API key (optional; can be empty for fallback CV generation)
     Default: ""
+  VapidPublicKey:
+    Type: String
+    Description: Web Push VAPID public key (optional until phone reminders are enabled)
+    Default: ""
+  VapidPrivateKey:
+    Type: String
+    NoEcho: true
+    Description: Web Push VAPID private key (optional until phone reminders are enabled)
+    Default: ""
+  VapidSubject:
+    Type: String
+    Description: Contact subject for Web Push VAPID claims
+    Default: "mailto:you@example.com"
+  GoogleClientId:
+    Type: String
+    Description: Google OAuth client ID for Calendar and Tasks sync
+    Default: ""
+  GoogleClientSecret:
+    Type: String
+    NoEcho: true
+    Description: Google OAuth client secret for Calendar and Tasks sync
+    Default: ""
+  GoogleRedirectUri:
+    Type: String
+    Description: Google OAuth redirect URI, usually the API endpoint plus /api/integrations/google/callback
+    Default: ""
+  AppFrontendUrl:
+    Type: String
+    Description: Work Diary frontend URL to return to after Google OAuth
+    Default: ""
 
 Globals:
   Function:
@@ -33,15 +63,32 @@ Globals:
         ENTRIES_TABLE: !Ref EntriesTable
         EVIDENCE_TABLE: !Ref EvidenceTable
         ACHIEVEMENTS_TABLE: !Ref AchievementsTable
+        PROJECTS_TABLE: !Ref ProjectsTable
+        PUSH_SUBSCRIPTIONS_TABLE: !Ref PushSubscriptionsTable
+        GOOGLE_INTEGRATION_TABLE: !Ref GoogleIntegrationTable
         UPLOADS_BUCKET: !Ref UploadsBucket
         UPLOADS_PREFIX: uploads/
+        REMINDER_SCHEDULE_GROUP: !Ref ReminderScheduleGroup
+        REMINDER_SCHEDULER_ROLE_ARN: !GetAtt ReminderSchedulerInvokeRole.Arn
+        WORK_DIARY_FUNCTION_ARN: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:WorkDiaryAPI'
+        VAPID_PUBLIC_KEY: !Ref VapidPublicKey
+        VAPID_PRIVATE_KEY: !Ref VapidPrivateKey
+        VAPID_SUBJECT: !Ref VapidSubject
+        GOOGLE_CLIENT_ID: !Ref GoogleClientId
+        GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret
+        GOOGLE_REDIRECT_URI: !Ref GoogleRedirectUri
+        APP_FRONTEND_URL: !Ref AppFrontendUrl
 
 Resources:
   TasksTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: WorkDiaryTasks
       BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
       AttributeDefinitions:
         - AttributeName: id
           AttributeType: S
@@ -51,9 +98,13 @@ Resources:
 
   EntriesTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: WorkDiaryEntries
       BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
       AttributeDefinitions:
         - AttributeName: id
           AttributeType: S
@@ -63,9 +114,13 @@ Resources:
 
   EvidenceTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: WorkDiaryEvidence
       BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
       AttributeDefinitions:
         - AttributeName: id
           AttributeType: S
@@ -75,9 +130,61 @@ Resources:
 
   AchievementsTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: WorkDiaryAchievements
       BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  ProjectsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: WorkDiaryProjects
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  PushSubscriptionsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: WorkDiaryPushSubscriptions
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  GoogleIntegrationTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: WorkDiaryGoogleIntegration
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
       AttributeDefinitions:
         - AttributeName: id
           AttributeType: S
@@ -87,7 +194,11 @@ Resources:
 
   UploadsBucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
+      VersioningConfiguration:
+        Status: Enabled
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -97,6 +208,32 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+
+  ReminderScheduleGroup:
+    Type: AWS::Scheduler::ScheduleGroup
+    Properties:
+      Name: work-diary-reminders
+
+  ReminderSchedulerInvokeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeWorkDiaryLambda
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:WorkDiaryAPI'
 
   WorkDiaryLambdaRole:
     Type: AWS::IAM::Role
@@ -128,6 +265,9 @@ Resources:
                   - !GetAtt EntriesTable.Arn
                   - !GetAtt EvidenceTable.Arn
                   - !GetAtt AchievementsTable.Arn
+                  - !GetAtt ProjectsTable.Arn
+                  - !GetAtt PushSubscriptionsTable.Arn
+                  - !GetAtt GoogleIntegrationTable.Arn
               - Effect: Allow
                 Action:
                   - s3:PutObject
@@ -135,9 +275,24 @@ Resources:
                   - s3:DeleteObject
                 Resource:
                   - !Sub '${UploadsBucket.Arn}/uploads/*'
+              - Effect: Allow
+                Action:
+                  - scheduler:CreateSchedule
+                  - scheduler:UpdateSchedule
+                  - scheduler:DeleteSchedule
+                  - scheduler:GetSchedule
+                Resource:
+                  - !Sub 'arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/${ReminderScheduleGroup}/*'
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !GetAtt ReminderSchedulerInvokeRole.Arn
 
   WorkDiaryFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
     Properties:
       FunctionName: WorkDiaryAPI
       CodeUri: .
@@ -156,6 +311,24 @@ Resources:
             ApiId: !Ref WorkDiaryApi
             Path: /
             Method: ANY
+
+  DailySummarySchedule:
+    Type: AWS::Scheduler::Schedule
+    DependsOn:
+      - WorkDiaryFunction
+    Properties:
+      GroupName: !Ref ReminderScheduleGroup
+      Name: work-diary-daily-summary
+      Description: Work Diary daily task summary at midnight Europe/London
+      ScheduleExpression: cron(0 0 * * ? *)
+      ScheduleExpressionTimezone: Europe/London
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      State: ENABLED
+      Target:
+        Arn: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:WorkDiaryAPI'
+        RoleArn: !GetAtt ReminderSchedulerInvokeRole.Arn
+        Input: '{"source":"work-diary.reminders","action":"daily_summary"}'
 
   WorkDiaryApi:
     Type: AWS::Serverless::HttpApi
@@ -190,6 +363,15 @@ Outputs:
   AchievementsTableName:
     Description: DynamoDB Achievements table name
     Value: !Ref AchievementsTable
+  ProjectsTableName:
+    Description: DynamoDB Projects table name
+    Value: !Ref ProjectsTable
+  PushSubscriptionsTableName:
+    Description: DynamoDB Push subscriptions table name
+    Value: !Ref PushSubscriptionsTable
+  GoogleIntegrationTableName:
+    Description: DynamoDB Google integration table name
+    Value: !Ref GoogleIntegrationTable
   UploadsBucketName:
     Description: S3 bucket for uploaded image evidence
     Value: !Ref UploadsBucket

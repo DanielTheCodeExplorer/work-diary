@@ -1,7 +1,17 @@
 .env
+.aws-sam/
+.DS_Store
+.coverage
+.pytest_cache/
+.venv/
+htmlcov/
+verify-*/
+verify-*.zip
+lambda-env.json
 .pycache/
 __pycache__/
 *.pyc
 data/*.sqlite3
+data/uploads/
 backups/
 *.log
