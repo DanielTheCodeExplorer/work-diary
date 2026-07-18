@@ -72,13 +72,12 @@ so `/api/*` calls go to Lambda from the CloudFront site.
 Work Diary can automatically sync Planner tasks to Google after you connect
 Google in Settings:
 
-- Tasks with a start or end date sync to a dedicated Google Calendar named `Work Diary`.
-- Tasks without any date sync to a Google Tasks list named `Work Diary`.
+- Every task syncs to the default Google Tasks list (`My Tasks`).
+- Google displays dated tasks on its Tasks calendar; Work Diary does not create duplicate Calendar events.
 - Work Diary stays the source of truth; local task saves are not blocked if
   Google is temporarily unavailable.
 
-To enable it, create a Google OAuth web client with Calendar API and Tasks API
-enabled, then set:
+To enable it, create a Google OAuth web client with the Tasks API enabled, then set:
 
 ```bash
 GOOGLE_CLIENT_ID=your-client-id
@@ -204,7 +203,7 @@ sqlite3 data/work_diary.sqlite3 ".backup backups/work_diary-$(date +%Y%m%d-%H%M%
 - Dashboard summary widgets for open tasks, due today, diary entries this week, achievements this week, and recent progress.
 - Dark planner-style task list with Inbox, Today, and Upcoming boxes plus full list views for each box.
 - Planner tasks can include start/end dates and times, a reminder, repeat rule, project/list, location, and notes.
-- Planner tasks can automatically sync dated tasks to Google Calendar and undated tasks to Google Tasks.
+- Planner tasks sync to Google Tasks, where Google displays dated tasks on its Tasks calendar.
 - The bottom plus action is reserved for image evidence with optional notes.
 - Diary entries support free-form journal notes plus detailed fields for date, title, what I did, project, skills, outcome, tags, difficulty, reflection notes, and CV bullet draft.
 - Achievements stores newest-first career bullets generated from diary entries and completed-task logs.

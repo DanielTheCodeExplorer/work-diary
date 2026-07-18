@@ -44,9 +44,10 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3"
 GOOGLE_TASKS_API_BASE = "https://tasks.googleapis.com/tasks/v1"
 GOOGLE_SCOPES = [
-    "https://www.googleapis.com/auth/calendar.app.created",
     "https://www.googleapis.com/auth/tasks",
 ]
+GOOGLE_PRIMARY_CALENDAR_ID = "primary"
+GOOGLE_DEFAULT_TASKLIST_ID = "@default"
 DEFAULT_OPENAI_MODEL = "gpt-5.4-nano"
 MAX_IMAGE_UPLOAD_BYTES = 3 * 1024 * 1024
 MAX_ACHIEVEMENT_BULLETS = 10
@@ -595,9 +596,19 @@ def google_failed_task_count(conn: sqlite3.Connection) -> int:
 def google_status(conn: sqlite3.Connection) -> Dict[str, Any]:
     config = read_google_config()
     integration = get_google_integration(conn)
+    connected = google_is_connected(integration)
+    granted_scopes = set(compact_text(integration.get("scope")).split())
+    needs_reauthorization = connected and not set(GOOGLE_SCOPES).issubset(granted_scopes)
+    ready = bool(
+        connected
+        and not needs_reauthorization
+        and compact_text(integration.get("tasklist_id")) == GOOGLE_DEFAULT_TASKLIST_ID
+    )
     return {
         "configured": google_client_is_configured(config),
-        "connected": google_is_connected(integration),
+        "connected": connected,
+        "ready": ready,
+        "needs_reauthorization": needs_reauthorization,
         "calendar_id": integration.get("calendar_id", ""),
         "tasklist_id": integration.get("tasklist_id", ""),
         "last_sync_at": integration.get("last_sync_at", ""),
@@ -704,45 +715,25 @@ def google_api(
 
 def ensure_google_calendar(conn: sqlite3.Connection, integration: Dict[str, Any]) -> str:
     calendar_id = compact_text(integration.get("calendar_id"))
-    if calendar_id:
+    if calendar_id == GOOGLE_PRIMARY_CALENDAR_ID:
         return calendar_id
-    payload = google_api(
-        conn,
-        "POST",
-        f"{GOOGLE_CALENDAR_API_BASE}/calendars",
-        {
-            "summary": "Work Diary",
-            "description": "Tasks synced automatically from Work Diary.",
-            "timeZone": REMINDER_TIMEZONE,
-        },
+    save_google_integration(
+        conn, {"calendar_id": GOOGLE_PRIMARY_CALENDAR_ID, "last_error": ""}
     )
-    calendar_id = compact_text(payload.get("id"))
-    if not calendar_id:
-        raise GoogleIntegrationError("Google did not return a Calendar ID.")
-    save_google_integration(conn, {"calendar_id": calendar_id, "last_error": ""})
-    return calendar_id
+    return GOOGLE_PRIMARY_CALENDAR_ID
 
 
 def ensure_google_tasklist(conn: sqlite3.Connection, integration: Dict[str, Any]) -> str:
     tasklist_id = compact_text(integration.get("tasklist_id"))
-    if tasklist_id:
+    if tasklist_id == GOOGLE_DEFAULT_TASKLIST_ID:
         return tasklist_id
-    payload = google_api(
-        conn,
-        "POST",
-        f"{GOOGLE_TASKS_API_BASE}/users/@me/lists",
-        {"title": "Work Diary"},
+    save_google_integration(
+        conn, {"tasklist_id": GOOGLE_DEFAULT_TASKLIST_ID, "last_error": ""}
     )
-    tasklist_id = compact_text(payload.get("id"))
-    if not tasklist_id:
-        raise GoogleIntegrationError("Google did not return a Task List ID.")
-    save_google_integration(conn, {"tasklist_id": tasklist_id, "last_error": ""})
-    return tasklist_id
+    return GOOGLE_DEFAULT_TASKLIST_ID
 
 
 def ensure_google_destinations(conn: sqlite3.Connection) -> Dict[str, Any]:
-    integration = get_google_integration(conn)
-    ensure_google_calendar(conn, integration)
     integration = get_google_integration(conn)
     ensure_google_tasklist(conn, integration)
     return get_google_integration(conn)
@@ -834,7 +825,7 @@ def html_escape(value: Any) -> str:
 
 
 def google_task_sync_target(task: Dict[str, Any]) -> str:
-    return "calendar_event" if compact_text(task.get("due_date") or task.get("start_date")) else "google_task"
+    return "google_task"
 
 
 def google_task_hash(task: Dict[str, Any]) -> str:
@@ -920,6 +911,9 @@ def google_task_body(task: Dict[str, Any]) -> Dict[str, Any]:
     if task.get("completed"):
         completed_at = compact_text(task.get("completed_at")) or now_iso()
         body["completed"] = completed_at
+    task_date = compact_text(task.get("due_date") or task.get("start_date"))
+    if task_date:
+        body["due"] = f"{task_date}T00:00:00.000Z"
     return body
 
 
@@ -948,13 +942,18 @@ def save_task_google_sync_state(
     *,
     target: str,
     sync_hash: str,
-    calendar_event_id: str = "",
-    calendar_event_link: str = "",
-    google_task_id: str = "",
-    google_task_link: str = "",
+    calendar_event_id: Optional[str] = None,
+    calendar_event_link: Optional[str] = None,
+    google_task_id: Optional[str] = None,
+    google_task_link: Optional[str] = None,
     error: str = "",
 ) -> None:
     timestamp = now_iso()
+    current_task = get_task(conn, int(task_id))
+    calendar_event_id = current_task.get("google_calendar_event_id", "") if calendar_event_id is None else calendar_event_id
+    calendar_event_link = current_task.get("google_calendar_event_link", "") if calendar_event_link is None else calendar_event_link
+    google_task_id = current_task.get("google_task_id", "") if google_task_id is None else google_task_id
+    google_task_link = current_task.get("google_task_link", "") if google_task_link is None else google_task_link
     conn.execute(
         """
         UPDATE tasks
@@ -1050,7 +1049,14 @@ def cleanup_previous_google_target(
 def sync_calendar_event_for_task(conn: sqlite3.Connection, task: Dict[str, Any], sync_hash: str) -> None:
     if task.get("completed"):
         delete_google_calendar_event(conn, task)
-        save_task_google_sync_state(conn, task["id"], target="calendar_event", sync_hash=sync_hash)
+        save_task_google_sync_state(
+            conn,
+            task["id"],
+            target="calendar_and_task",
+            sync_hash=sync_hash,
+            calendar_event_id="",
+            calendar_event_link="",
+        )
         return
     calendar_id = ensure_google_calendar(conn, get_google_integration(conn))
     event_id = google_calendar_event_id_for_task(task)
@@ -1078,19 +1084,25 @@ def sync_calendar_event_for_task(conn: sqlite3.Connection, task: Dict[str, Any],
     save_task_google_sync_state(
         conn,
         task["id"],
-        target="calendar_event",
+        target="calendar_and_task",
         sync_hash=sync_hash,
         calendar_event_id=event_id,
         calendar_event_link=compact_text(payload.get("htmlLink")),
     )
 
 
-def sync_google_task_for_task(conn: sqlite3.Connection, task: Dict[str, Any], sync_hash: str) -> None:
+def sync_google_task_for_task(
+    conn: sqlite3.Connection,
+    task: Dict[str, Any],
+    sync_hash: str,
+    *,
+    target: str = "google_task",
+) -> None:
     tasklist_id = ensure_google_tasklist(conn, get_google_integration(conn))
     body = google_task_body(task)
     google_task_id = compact_text(task.get("google_task_id"))
     if task.get("completed") and not google_task_id:
-        save_task_google_sync_state(conn, task["id"], target="google_task", sync_hash=sync_hash)
+        save_task_google_sync_state(conn, task["id"], target=target, sync_hash=sync_hash)
         return
     if google_task_id:
         try:
@@ -1119,7 +1131,7 @@ def sync_google_task_for_task(conn: sqlite3.Connection, task: Dict[str, Any], sy
     save_task_google_sync_state(
         conn,
         task["id"],
-        target="google_task",
+        target=target,
         sync_hash=sync_hash,
         google_task_id=compact_text(payload.get("id")),
         google_task_link=compact_text(payload.get("webViewLink")),
@@ -1139,19 +1151,18 @@ def sync_task_to_google(
         and compact_text(task.get("google_sync_target")) == target
     ):
         return
-    target_changed = False
-    if previous:
-        previous_target = compact_text(previous.get("google_sync_target")) or google_task_sync_target(previous)
-        target_changed = previous_target != target
-        cleanup_previous_google_target(conn, previous, target)
-    if target == "calendar_event":
-        if not target_changed and compact_text(task.get("google_task_id")):
-            delete_google_task(conn, task)
-        sync_calendar_event_for_task(conn, task, sync_hash)
-    else:
-        if not target_changed and compact_text(task.get("google_calendar_event_id")):
-            delete_google_calendar_event(conn, task)
-        sync_google_task_for_task(conn, task, sync_hash)
+    if compact_text(task.get("google_calendar_event_id")):
+        delete_google_calendar_event(conn, task)
+        save_task_google_sync_state(
+            conn,
+            task["id"],
+            target="google_task",
+            sync_hash=sync_hash,
+            calendar_event_id="",
+            calendar_event_link="",
+        )
+        task = get_task(conn, int(task["id"]))
+    sync_google_task_for_task(conn, task, sync_hash, target="google_task")
 
 
 def auto_sync_task_after_save(
@@ -1168,9 +1179,10 @@ def auto_delete_google_for_task(conn: sqlite3.Connection, task: Dict[str, Any]) 
     if not google_is_connected(get_google_integration(conn)):
         return
     try:
-        if (compact_text(task.get("google_sync_target")) or google_task_sync_target(task)) == "calendar_event":
+        target = compact_text(task.get("google_sync_target")) or google_task_sync_target(task)
+        if target in {"calendar_event", "calendar_and_task"}:
             delete_google_calendar_event(conn, task)
-        else:
+        if target in {"google_task", "calendar_and_task"}:
             delete_google_task(conn, task)
         save_google_integration(conn, {"last_sync_at": now_iso(), "last_error": ""})
     except Exception as exc:
@@ -1216,8 +1228,6 @@ def disconnect_google(conn: sqlite3.Connection) -> Dict[str, Any]:
             "refresh_token": "",
             "token_expires_at": 0,
             "scope": "",
-            "calendar_id": "",
-            "tasklist_id": "",
             "oauth_state": "",
             "oauth_state_created_at": "",
             "oauth_return_url": "",
@@ -3943,7 +3953,7 @@ class WorkDiaryHandler(BaseHTTPRequestHandler):
         if method == "GET" and path == "/api/integrations/google/callback":
             return complete_google_connect(conn, flatten_query(query))
         if method == "POST" and path == "/api/integrations/google/retry":
-            result = retry_google_sync(conn, include_all=False)
+            result = retry_google_sync(conn, include_all=True)
             return {**result, "status": google_status(conn)}
         if method == "POST" and path == "/api/integrations/google/disconnect":
             return disconnect_google(conn)

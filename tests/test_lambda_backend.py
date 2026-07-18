@@ -71,6 +71,109 @@ class LambdaBackendHelperTests(unittest.TestCase):
         self.assertEqual(result["statusCode"], 401)
         self.assertIn("resource_metadata=", result["headers"]["WWW-Authenticate"])
 
+    def test_google_status_requires_both_destinations_to_be_ready(self):
+        integration = {
+            "access_token": "access",
+            "refresh_token": "refresh",
+            "calendar_id": "calendar-1",
+            "tasklist_id": "",
+            "scope": " ".join(lambda_backend.GOOGLE_SCOPES),
+        }
+        with unittest.mock.patch.object(
+            lambda_backend, "get_google_integration", return_value=integration
+        ), unittest.mock.patch.object(
+            lambda_backend,
+            "read_google_config",
+            return_value={
+                "client_id": "client",
+                "client_secret": "secret",
+                "redirect_uri": "https://example.com/callback",
+                "frontend_url": "https://example.com",
+            },
+        ), unittest.mock.patch.object(
+            lambda_backend, "google_failed_task_count", return_value=0
+        ):
+            status = lambda_backend.google_status()
+
+        self.assertTrue(status["connected"])
+        self.assertFalse(status["ready"])
+
+    def test_google_status_accepts_legacy_calendar_scope_but_requires_default_tasklist(self):
+        integration = {
+            "refresh_token": "refresh",
+            "calendar_id": "legacy-calendar",
+            "tasklist_id": "tasks-1",
+            "scope": "https://www.googleapis.com/auth/calendar.app.created https://www.googleapis.com/auth/tasks",
+        }
+        with unittest.mock.patch.object(
+            lambda_backend, "get_google_integration", return_value=integration
+        ), unittest.mock.patch.object(
+            lambda_backend,
+            "read_google_config",
+            return_value={
+                "client_id": "client",
+                "client_secret": "secret",
+                "redirect_uri": "https://example.com/callback",
+                "frontend_url": "https://example.com",
+            },
+        ), unittest.mock.patch.object(
+            lambda_backend, "google_failed_task_count", return_value=0
+        ):
+            status = lambda_backend.google_status()
+
+        self.assertTrue(status["connected"])
+        self.assertFalse(status["needs_reauthorization"])
+        self.assertFalse(status["ready"])
+
+    def test_ensure_google_calendar_selects_primary_without_creating_a_calendar(self):
+        with unittest.mock.patch.object(
+            lambda_backend, "save_google_integration"
+        ) as save_integration, unittest.mock.patch.object(
+            lambda_backend, "google_api"
+        ) as google_api:
+            calendar_id = lambda_backend.ensure_google_calendar(
+                {"calendar_id": "legacy-calendar"}
+            )
+
+        self.assertEqual(calendar_id, "primary")
+        save_integration.assert_called_once_with(
+            {"calendar_id": "primary", "last_error": ""}
+        )
+        google_api.assert_not_called()
+
+    def test_ensure_google_tasklist_selects_default_without_creating_a_list(self):
+        with unittest.mock.patch.object(
+            lambda_backend, "google_api"
+        ) as google_api, unittest.mock.patch.object(
+            lambda_backend, "save_google_integration"
+        ) as save_integration:
+            tasklist_id = lambda_backend.ensure_google_tasklist({"tasklist_id": ""})
+
+        self.assertEqual(tasklist_id, "@default")
+        google_api.assert_not_called()
+        save_integration.assert_called_once_with(
+            {"tasklist_id": "@default", "last_error": ""}
+        )
+
+    def test_retry_google_connection_finishes_destinations_before_sync(self):
+        with unittest.mock.patch.object(
+            lambda_backend, "ensure_google_destinations"
+        ) as ensure_destinations, unittest.mock.patch.object(
+            lambda_backend,
+            "retry_google_sync",
+            return_value={"ok": True, "synced": 0, "failed": 0, "skipped": 0},
+        ) as retry_sync, unittest.mock.patch.object(
+            lambda_backend, "save_google_integration"
+        ) as save_integration, unittest.mock.patch.object(
+            lambda_backend, "google_status", return_value={"ready": True}
+        ):
+            result = lambda_backend.retry_google_connection()
+
+        ensure_destinations.assert_called_once_with()
+        retry_sync.assert_called_once_with(include_all=True)
+        save_integration.assert_called_once_with({"last_error": ""})
+        self.assertTrue(result["status"]["ready"])
+
     def test_response_preserves_empty_list_body(self):
         response = lambda_backend.response(200, [])
 

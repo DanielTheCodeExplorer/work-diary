@@ -771,11 +771,11 @@ class WorkDiaryTests(unittest.TestCase):
         self.assertEqual(len(list_tasks(self.conn, {"completed": "false"})), 1)
         self.assertEqual(len(list_tasks(self.conn, {"completed": "true"})), 0)
 
-    def test_google_sync_targets_dated_tasks_to_calendar_and_undated_to_tasks(self):
+    def test_google_sync_targets_all_tasks_to_google_tasks(self):
         dated = {"title": "Timed task", "due_date": "2026-06-04", "due_time": "09:30"}
         undated = {"title": "Inbox task"}
 
-        self.assertEqual(google_task_sync_target(dated), "calendar_event")
+        self.assertEqual(google_task_sync_target(dated), "google_task")
         self.assertEqual(google_task_sync_target(undated), "google_task")
 
         event = google_calendar_event_body({**dated, "id": 123, "notes": "Bring notes."}, "abc123")
@@ -787,6 +787,9 @@ class WorkDiaryTests(unittest.TestCase):
         self.assertEqual(google_task["title"], "Inbox task")
         self.assertEqual(google_task["status"], "needsAction")
         self.assertIn("Work Diary task ID: 456", google_task["notes"])
+
+        dated_google_task = google_task_body({**dated, "id": 123})
+        self.assertEqual(dated_google_task["due"], "2026-06-04T00:00:00.000Z")
 
     def test_google_calendar_uses_task_start_time_when_supplied(self):
         event = google_calendar_event_body(
@@ -812,7 +815,7 @@ class WorkDiaryTests(unittest.TestCase):
             "start_time": "09:00",
         }
 
-        self.assertEqual(google_task_sync_target(task), "calendar_event")
+        self.assertEqual(google_task_sync_target(task), "google_task")
         event = google_calendar_event_body(task, "abc123")
         self.assertEqual(event["start"]["dateTime"], "2026-06-04T09:00:00")
         self.assertEqual(event["end"]["dateTime"], "2026-06-04T09:30:00")
@@ -825,7 +828,7 @@ class WorkDiaryTests(unittest.TestCase):
         self.assertEqual(saved["title"], "Keep local task")
         self.assertIn("Google unavailable", saved["google_sync_error"])
 
-    def test_google_sync_cleans_up_old_target_when_task_gets_a_date(self):
+    def test_google_sync_keeps_task_without_adding_calendar_event_when_date_is_added(self):
         previous = {
             "id": 1,
             "title": "Inbox task",
@@ -842,10 +845,14 @@ class WorkDiaryTests(unittest.TestCase):
         with patch("app.google_is_connected", return_value=True), patch(
             "app.delete_google_task"
         ) as delete_google_task, patch("app.sync_calendar_event_for_task") as sync_calendar:
-            sync_task_to_google(self.conn, current, previous)
+            with patch("app.get_task", return_value=current), patch(
+                "app.sync_google_task_for_task"
+            ) as sync_google_task:
+                sync_task_to_google(self.conn, current, previous)
 
-        delete_google_task.assert_called_once()
-        sync_calendar.assert_called_once()
+        delete_google_task.assert_not_called()
+        sync_calendar.assert_not_called()
+        sync_google_task.assert_called_once()
 
     def test_push_subscribe_and_unsubscribe(self):
         payload = {
