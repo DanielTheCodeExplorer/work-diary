@@ -28,6 +28,49 @@ lambda_backend = importlib.import_module("lambda_backend")
 
 
 class LambdaBackendHelperTests(unittest.TestCase):
+    def test_mcp_initialize_and_tool_list_follow_json_rpc(self):
+        initialize = lambda_backend.handle_mcp_request(
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+        )
+        tools = lambda_backend.handle_mcp_request(
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
+        )
+
+        self.assertEqual(initialize["result"]["protocolVersion"], "2025-06-18")
+        self.assertIn("tools", initialize["result"]["capabilities"])
+        self.assertIn("search", {tool["name"] for tool in tools["result"]["tools"]})
+
+    def test_mcp_task_view_does_not_expose_google_credentials_or_sync_ids(self):
+        view = lambda_backend.mcp_task_view(
+            {
+                "id": "task-1",
+                "title": "Private task",
+                "updated_at": "2026-07-18T10:00:00Z",
+                "google_task_id": "provider-secret-id",
+                "google_sync_hash": "private-hash",
+            }
+        )
+
+        self.assertNotIn("google_task_id", view)
+        self.assertNotIn("google_sync_hash", view)
+
+    def test_mcp_rejects_an_unauthorized_request_with_resource_metadata(self):
+        event = {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/mcp",
+            "headers": {"host": "api.example.com", "x-forwarded-proto": "https"},
+            "body": json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize"}),
+        }
+        with unittest.mock.patch.object(
+            lambda_backend, "get_config_value", side_effect=lambda key, default="": "mcp-secret" if key == "MCP_SIGNING_SECRET" else default
+        ):
+            result = lambda_backend.lambda_handler(
+                event, types.SimpleNamespace(aws_request_id="mcp-request")
+            )
+
+        self.assertEqual(result["statusCode"], 401)
+        self.assertIn("resource_metadata=", result["headers"]["WWW-Authenticate"])
+
     def test_response_preserves_empty_list_body(self):
         response = lambda_backend.response(200, [])
 
