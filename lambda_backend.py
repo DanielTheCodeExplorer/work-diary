@@ -1339,7 +1339,7 @@ def mcp_authorize_page(params: Dict[str, str], origin: str, error: str = "") -> 
     error_html = f'<p style="color:#ff8a8a">{html.escape(error)}</p>' if error else ""
     return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect Work Diary</title></head>
 <body style="font-family:system-ui;background:#111;color:#f5f5f5;max-width:32rem;margin:4rem auto;padding:1rem">
-<h1>Connect Work Diary</h1><p>ChatGPT is requesting access to read and update your private task list.</p>{error_html}
+<h1>Connect Work Diary</h1><p>ChatGPT is requesting access to read and update your private task and project planning data. Permanent deletion is not available through this connection.</p>{error_html}
 <form method="post" action="/oauth/authorize">{hidden}<label>Work Diary password<br><input autofocus required type="password" name="password" style="margin-top:.5rem;padding:.7rem;width:100%;box-sizing:border-box"></label><button style="margin-top:1rem;padding:.7rem 1rem" type="submit">Allow access</button></form>
 </body></html>"""
 
@@ -1427,12 +1427,21 @@ def mcp_task_url(task_id: Any) -> str:
 
 def mcp_task_view(task: Dict[str, Any]) -> Dict[str, Any]:
     fields = [
-        "id", "title", "project", "start_date", "start_time", "due_date", "due_time",
-        "priority", "location", "notes", "completed", "completed_at", "archived", "archived_at", "created_at", "updated_at",
+        "id", "title", "project_id", "project", "start_date", "start_time", "due_date", "due_time",
+        "reminder_at", "repeat_rule", "repeat_interval_days", "repeat_until", "location", "notes",
+        "project_order", "completed", "completed_at", "archived", "archived_at", "created_at", "updated_at",
     ]
     payload = {field: task.get(field, "") for field in fields}
     payload["url"] = mcp_task_url(task.get("id"))
     return payload
+
+
+def mcp_project_view(project: Dict[str, Any]) -> Dict[str, Any]:
+    fields = [
+        "id", "name", "goal", "deadline", "status", "color", "notes",
+        "completed_at", "created_at", "updated_at",
+    ]
+    return {field: project.get(field, "") for field in fields}
 
 
 def mcp_filter_tasks(status: str) -> List[Dict[str, Any]]:
@@ -1481,7 +1490,7 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         matches = []
         for task in (task for task in list_tasks({}) if not task.get("archived")):
             view = mcp_task_view(task)
-            haystack = " ".join(str(view.get(field) or "") for field in ("title", "project", "notes", "priority")).lower()
+            haystack = " ".join(str(view.get(field) or "") for field in ("title", "project", "notes", "location")).lower()
             state_match = (
                 (query == "overdue" and task in mcp_filter_tasks("overdue"))
                 or (query == "today" and task in mcp_filter_tasks("today"))
@@ -1507,10 +1516,24 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         key = compact_text(arguments.get("idempotency_key"))
         if len(key) < 8:
             raise ValidationError("A valid idempotency key is required.")
-        allowed = {field: arguments.get(field, "") for field in ("title", "start_date", "start_time", "due_date", "due_time", "priority", "project", "notes")}
-        result = mcp_idempotent(name, key, lambda: mcp_task_view(create_task({**allowed, "completed": False})))
+        allowed_fields = (
+            "title", "start_date", "start_time", "due_date", "due_time", "project", "location", "notes",
+            "reminder_at", "repeat_rule", "repeat_interval_days", "repeat_until",
+        )
+        allowed = {field: arguments[field] for field in allowed_fields if field in arguments}
+
+        def create_confirmed_task():
+            project_name = compact_text(allowed.get("project"))
+            if project_name and not find_project_by_name(project_name):
+                raise ValidationError("Project not found. List projects or create the project before assigning this task.")
+            return mcp_task_view(create_task({**allowed, "completed": False}))
+
+        result = mcp_idempotent(name, key, create_confirmed_task)
         return mcp_tool_success({"task": result}, f"Created Work Diary task: {result['title']}")
-    if name in {"complete_task", "reschedule_task", "archive_task", "restore_task"}:
+    if name in {
+        "update_task_details", "complete_task", "reopen_task", "reschedule_task",
+        "set_task_reminder", "set_task_recurrence", "archive_task", "restore_task",
+    }:
         task_id = compact_text(arguments.get("task_id"))
         expected = compact_text(arguments.get("expected_updated_at"))
         key = compact_text(arguments.get("idempotency_key"))
@@ -1531,14 +1554,93 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
                 return mcp_task_view(update_task(task_id, {"archived": False}))
             if name == "complete_task":
                 return mcp_task_view(update_task(task_id, {"completed": True}))
+            if name == "reopen_task":
+                return mcp_task_view(update_task(task_id, {"completed": False}))
+            if name == "update_task_details":
+                updates = {field: arguments[field] for field in ("title", "location", "notes") if field in arguments}
+                if "project" in arguments:
+                    project_name = compact_text(arguments["project"])
+                    if project_name and not find_project_by_name(project_name):
+                        raise ValidationError("Project not found. List projects or create the project before assigning this task.")
+                    updates["project"] = arguments["project"]
+                    updates["project_id"] = ""
+                if not updates:
+                    raise ValidationError("At least one task detail is required.")
+                return mcp_task_view(update_task(task_id, updates))
+            if name == "set_task_reminder":
+                if "reminder_at" not in arguments:
+                    raise ValidationError("Reminder time is required; use an empty value to clear it.")
+                return mcp_task_view(update_task(task_id, {"reminder_at": arguments["reminder_at"]}))
+            if name == "set_task_recurrence":
+                rule = validate_repeat_rule(arguments.get("repeat_rule"))
+                updates = {
+                    "repeat_rule": rule,
+                    "repeat_interval_days": arguments.get("repeat_interval_days", 1),
+                    "repeat_until": arguments.get("repeat_until", ""),
+                }
+                if rule == "none":
+                    updates.update({"repeat_interval_days": 1, "repeat_until": ""})
+                return mcp_task_view(update_task(task_id, updates))
             updates = {field: arguments[field] for field in ("start_date", "start_time", "due_date", "due_time") if field in arguments}
             if not updates:
                 raise ValidationError("At least one schedule field is required.")
             return mcp_task_view(update_task(task_id, updates))
 
         result = mcp_idempotent(name, key, mutate_task)
-        action = {"complete_task": "Completed", "archive_task": "Archived", "restore_task": "Restored"}.get(name, "Rescheduled")
+        action = {
+            "update_task_details": "Updated", "complete_task": "Completed", "reopen_task": "Reopened",
+            "archive_task": "Archived", "restore_task": "Restored", "set_task_reminder": "Updated reminder for",
+            "set_task_recurrence": "Updated recurrence for", "reschedule_task": "Rescheduled",
+        }[name]
         return mcp_tool_success({"task": result}, f"{action} Work Diary task: {result['title']}")
+    if name == "list_projects":
+        status = compact_text(arguments.get("status")) or "all"
+        if status not in {"all", "planned", "active", "paused", "complete"}:
+            raise ValidationError("Project status is not supported.")
+        limit = max(1, min(int(arguments.get("limit") or 50), 100))
+        projects = list_projects()
+        if status != "all":
+            projects = [project for project in projects if project.get("status") == status]
+        views = [mcp_project_view(project) for project in projects[:limit]]
+        return mcp_tool_success({"status": status, "count": len(views), "projects": views})
+    if name == "create_project":
+        key = compact_text(arguments.get("idempotency_key"))
+        if len(key) < 8:
+            raise ValidationError("A valid idempotency key is required.")
+        allowed_fields = ("name", "goal", "deadline", "status", "color", "notes")
+        allowed = {field: arguments[field] for field in allowed_fields if field in arguments}
+        result = mcp_idempotent(name, key, lambda: mcp_project_view(create_project(allowed)))
+        return mcp_tool_success({"project": result}, f"Created Work Diary project: {result['name']}")
+    if name in {"update_project", "set_project_status", "reorder_project_tasks"}:
+        project_id = compact_text(arguments.get("project_id"))
+        expected = compact_text(arguments.get("expected_updated_at"))
+        key = compact_text(arguments.get("idempotency_key"))
+        if len(key) < 8:
+            raise ValidationError("A valid idempotency key is required.")
+
+        def mutate_project():
+            current = get_project(project_id)
+            if current.get("updated_at") != expected:
+                raise ValidationError("Project changed since it was read. List projects again before updating.")
+            if name == "update_project":
+                updates = {field: arguments[field] for field in ("name", "goal", "deadline", "color", "notes") if field in arguments}
+                if not updates:
+                    raise ValidationError("At least one project detail is required.")
+                return {"project": mcp_project_view(update_project(project_id, updates))}
+            if name == "set_project_status":
+                status = validate_project_status(arguments.get("status"))
+                updated = complete_project(project_id) if status == "complete" else update_project(project_id, {"status": status})
+                return {"project": mcp_project_view(updated)}
+            reordered = reorder_project_tasks(project_id, {"task_ids": arguments.get("task_ids")})
+            return {
+                "project": mcp_project_view(get_project(project_id)),
+                "tasks": [mcp_task_view(task) for task in reordered["tasks"]],
+            }
+
+        result = mcp_idempotent(name, key, mutate_project)
+        action = {"update_project": "Updated", "set_project_status": "Changed status for", "reorder_project_tasks": "Reordered tasks in"}[name]
+        project = result["project"]
+        return mcp_tool_success(result, f"{action} Work Diary project: {project['name']}")
     raise ValidationError("MCP tool is not supported.")
 
 
@@ -1555,8 +1657,8 @@ def handle_mcp_request(body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             {
                 "protocolVersion": MCP_PROTOCOL_VERSION,
                 "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "Work Diary", "version": "1.0.0"},
-                "instructions": "Use Work Diary as the source of truth for Daniel's private tasks. Read current state before proposing changes and only mutate tasks after confirmation.",
+                "serverInfo": {"name": "Work Diary", "version": "1.3.0"},
+                "instructions": "Use Work Diary as the source of truth for Daniel's private task and project planning. Read the current task or project revision before proposing changes, mutate only after confirmation, and never imply that permanent deletion is available.",
             },
         )
     if method == "ping":

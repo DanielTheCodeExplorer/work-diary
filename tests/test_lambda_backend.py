@@ -46,13 +46,17 @@ class LambdaBackendHelperTests(unittest.TestCase):
                 "id": "task-1",
                 "title": "Private task",
                 "updated_at": "2026-07-18T10:00:00Z",
+                "reminder_at": "2026-07-19T09:00",
                 "google_task_id": "provider-secret-id",
                 "google_sync_hash": "private-hash",
+                "priority": "high",
             }
         )
 
         self.assertNotIn("google_task_id", view)
         self.assertNotIn("google_sync_hash", view)
+        self.assertNotIn("priority", view)
+        self.assertEqual(view["reminder_at"], "2026-07-19T09:00")
 
     def test_mcp_archive_accepts_open_task_and_preserves_revision_check(self):
         open_task = {
@@ -110,6 +114,168 @@ class LambdaBackendHelperTests(unittest.TestCase):
         update_task.assert_called_once_with("task-2", {"archived": False})
         self.assertFalse(result["structuredContent"]["task"]["archived"])
         self.assertFalse(result["structuredContent"]["task"]["completed"])
+
+    def test_mcp_reopen_and_detail_updates_are_revision_checked(self):
+        completed_task = {
+            "id": "task-3",
+            "title": "Old title",
+            "completed": True,
+            "archived": False,
+            "updated_at": "2026-07-18T11:00:00Z",
+        }
+        reopened_task = {**completed_task, "completed": False, "completed_at": ""}
+        common = {
+            "task_id": "task-3",
+            "expected_updated_at": completed_task["updated_at"],
+            "idempotency_key": "reopen-task-3",
+        }
+
+        with unittest.mock.patch.object(
+            lambda_backend, "mcp_idempotent", side_effect=lambda _name, _key, operation: operation()
+        ), unittest.mock.patch.object(
+            lambda_backend, "get_task", return_value=completed_task
+        ), unittest.mock.patch.object(
+            lambda_backend, "update_task", return_value=reopened_task
+        ) as update_task:
+            result = lambda_backend.call_mcp_tool("reopen_task", common)
+
+        update_task.assert_called_once_with("task-3", {"completed": False})
+        self.assertFalse(result["structuredContent"]["task"]["completed"])
+
+        edited_task = {**reopened_task, "title": "New title", "project": "", "project_id": ""}
+        detail_args = {
+            **common,
+            "title": "New title",
+            "project": "",
+            "idempotency_key": "edit-task-3",
+        }
+        with unittest.mock.patch.object(
+            lambda_backend, "mcp_idempotent", side_effect=lambda _name, _key, operation: operation()
+        ), unittest.mock.patch.object(
+            lambda_backend, "get_task", return_value=completed_task
+        ), unittest.mock.patch.object(
+            lambda_backend, "update_task", return_value=edited_task
+        ) as update_task:
+            lambda_backend.call_mcp_tool("update_task_details", detail_args)
+
+        update_task.assert_called_once_with(
+            "task-3", {"title": "New title", "project": "", "project_id": ""}
+        )
+
+    def test_mcp_can_set_reminders_and_recurrence(self):
+        task = {
+            "id": "task-4",
+            "title": "Plan week",
+            "completed": False,
+            "archived": False,
+            "updated_at": "2026-07-18T12:00:00Z",
+        }
+        base = {
+            "task_id": "task-4",
+            "expected_updated_at": task["updated_at"],
+        }
+        cases = [
+            (
+                "set_task_reminder",
+                {**base, "reminder_at": "2026-07-20T08:30", "idempotency_key": "reminder-task-4"},
+                {"reminder_at": "2026-07-20T08:30"},
+            ),
+            (
+                "set_task_recurrence",
+                {
+                    **base,
+                    "repeat_rule": "interval",
+                    "repeat_interval_days": 3,
+                    "repeat_until": "2026-08-31",
+                    "idempotency_key": "repeat-task-4",
+                },
+                {"repeat_rule": "interval", "repeat_interval_days": 3, "repeat_until": "2026-08-31"},
+            ),
+        ]
+
+        for tool_name, arguments, expected_update in cases:
+            with self.subTest(tool=tool_name), unittest.mock.patch.object(
+                lambda_backend, "mcp_idempotent", side_effect=lambda _name, _key, operation: operation()
+            ), unittest.mock.patch.object(
+                lambda_backend, "get_task", return_value=task
+            ), unittest.mock.patch.object(
+                lambda_backend, "update_task", return_value={**task, **expected_update}
+            ) as update_task:
+                lambda_backend.call_mcp_tool(tool_name, arguments)
+                update_task.assert_called_once_with("task-4", expected_update)
+
+    def test_mcp_rejects_task_and_project_changes_after_revision_drift(self):
+        task = {
+            "id": "task-stale",
+            "title": "Changed elsewhere",
+            "completed": False,
+            "archived": False,
+            "updated_at": "2026-07-18T13:00:00Z",
+        }
+        task_arguments = {
+            "task_id": task["id"],
+            "expected_updated_at": "2026-07-18T12:59:00Z",
+            "idempotency_key": "stale-task-change",
+        }
+        with unittest.mock.patch.object(
+            lambda_backend, "mcp_idempotent", side_effect=lambda _name, _key, operation: operation()
+        ), unittest.mock.patch.object(lambda_backend, "get_task", return_value=task):
+            with self.assertRaisesRegex(lambda_backend.ValidationError, "changed since it was read"):
+                lambda_backend.call_mcp_tool("reopen_task", task_arguments)
+
+        project = {
+            "id": "project-stale",
+            "name": "Changed project",
+            "status": "active",
+            "updated_at": "2026-07-18T13:00:00Z",
+        }
+        project_arguments = {
+            "project_id": project["id"],
+            "status": "paused",
+            "expected_updated_at": "2026-07-18T12:59:00Z",
+            "idempotency_key": "stale-project-change",
+        }
+        with unittest.mock.patch.object(
+            lambda_backend, "mcp_idempotent", side_effect=lambda _name, _key, operation: operation()
+        ), unittest.mock.patch.object(lambda_backend, "get_project", return_value=project):
+            with self.assertRaisesRegex(lambda_backend.ValidationError, "changed since it was read"):
+                lambda_backend.call_mcp_tool("set_project_status", project_arguments)
+
+    def test_mcp_project_tools_cover_non_delete_planning_actions(self):
+        project = {
+            "id": "project-1",
+            "name": "Launch",
+            "goal": "Ship",
+            "deadline": "2026-08-01",
+            "status": "active",
+            "color": "#5DD4C0",
+            "notes": "",
+            "completed_at": "",
+            "created_at": "2026-07-18T09:00:00Z",
+            "updated_at": "2026-07-18T12:00:00Z",
+        }
+        with unittest.mock.patch.object(lambda_backend, "list_projects", return_value=[project]):
+            listed = lambda_backend.call_mcp_tool("list_projects", {"status": "active"})
+        self.assertEqual(listed["structuredContent"]["projects"][0]["id"], "project-1")
+
+        arguments = {
+            "project_id": "project-1",
+            "status": "complete",
+            "expected_updated_at": project["updated_at"],
+            "idempotency_key": "complete-project-1",
+        }
+        completed = {**project, "status": "complete", "completed_at": "2026-07-18T12:30:00Z"}
+        with unittest.mock.patch.object(
+            lambda_backend, "mcp_idempotent", side_effect=lambda _name, _key, operation: operation()
+        ), unittest.mock.patch.object(
+            lambda_backend, "get_project", return_value=project
+        ), unittest.mock.patch.object(
+            lambda_backend, "complete_project", return_value=completed
+        ) as complete_project:
+            result = lambda_backend.call_mcp_tool("set_project_status", arguments)
+
+        complete_project.assert_called_once_with("project-1")
+        self.assertEqual(result["structuredContent"]["project"]["status"], "complete")
 
     def test_mcp_rejects_an_unauthorized_request_with_resource_metadata(self):
         event = {

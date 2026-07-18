@@ -23,13 +23,27 @@ release does not provide an SSE stream.
 | `fetch` | Standard read-only fetch by task ID | Read-only |
 | `list_tasks` | List open, overdue, today, upcoming, completed, archived, or all tasks | Read-only |
 | `create_task` | Create a task using existing validation and Google sync | Idempotent write |
+| `update_task_details` | Change a task's title, project, location, or notes | Idempotent write |
 | `complete_task` | Complete a task after checking its last-read revision | Idempotent write |
+| `reopen_task` | Reopen a completed task without losing its schedule or details | Reversible idempotent write |
 | `reschedule_task` | Change independent start/end fields after a revision check | Idempotent write |
+| `set_task_reminder` | Set or clear a phone reminder | Idempotent write |
+| `set_task_recurrence` | Set, change, or clear recurrence | Idempotent write |
 | `archive_task` | Hide an open or completed task from planning views after a revision check | Reversible idempotent write |
 | `restore_task` | Return an archived task to planning views without changing its completion state | Reversible idempotent write |
+| `list_projects` | List projects by status | Read-only |
+| `create_project` | Create a project for organising tasks | Idempotent write |
+| `update_project` | Change project planning details | Idempotent write |
+| `set_project_status` | Plan, activate, pause, complete, or reopen a project | Idempotent write |
+| `reorder_project_tasks` | Set the complete order of a project's open tasks | Idempotent write |
 
 Only planning fields are returned. Google access tokens, provider IDs, sync
 hashes, internal traces, and unrelated diary data are excluded.
+
+Permanent task and project deletion is intentionally not exposed. Diary
+entries, CV evidence, achievements, and account/integration settings also remain
+outside the MCP permission boundary because they are not needed for calendar
+planning.
 
 ## Authentication
 

@@ -74,6 +74,24 @@ class McpIntegrationTests(unittest.TestCase):
         self.assertTrue(tools["restore_task"]["annotations"]["idempotentHint"])
         self.assertIn("archived", tools["list_tasks"]["inputSchema"]["properties"]["status"]["enum"])
 
+        expected_planning_tools = {
+            "search", "fetch", "list_tasks", "create_task", "update_task_details",
+            "complete_task", "reopen_task", "archive_task", "restore_task",
+            "reschedule_task", "set_task_reminder", "set_task_recurrence",
+            "list_projects", "create_project", "update_project", "set_project_status",
+            "reorder_project_tasks",
+        }
+        self.assertEqual(set(tools), expected_planning_tools)
+        self.assertNotIn("delete_task", tools)
+        self.assertNotIn("delete_project", tools)
+        self.assertNotIn("priority", tools["create_task"]["inputSchema"]["properties"])
+        self.assertIn("reminder_at", tools["create_task"]["inputSchema"]["properties"])
+        self.assertIn("repeat_rule", tools["create_task"]["inputSchema"]["properties"])
+        for name in expected_planning_tools - {"search", "fetch", "list_tasks", "list_projects"}:
+            self.assertFalse(tools[name]["annotations"]["readOnlyHint"])
+            self.assertFalse(tools[name]["annotations"]["destructiveHint"])
+            self.assertTrue(tools[name]["annotations"]["idempotentHint"])
+
         search_schema = tools["search"]["inputSchema"]
         self.assertEqual(search_schema["required"], ["query"])
         self.assertFalse(search_schema["additionalProperties"])
