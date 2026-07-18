@@ -185,6 +185,22 @@ def tool_descriptors() -> list[Dict[str, Any]]:
             "annotations": {**write, "idempotentHint": True},
         },
         {
+            "name": "restore_task",
+            "title": "Restore an archived Work Diary task",
+            "description": "Use this when the user has confirmed that an archived task should return to normal planning views. This preserves whether the task was open or completed before it was archived.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "expected_updated_at": {"type": "string"},
+                    "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 200},
+                },
+                "required": ["task_id", "expected_updated_at", "idempotency_key"],
+                "additionalProperties": False,
+            },
+            "annotations": {**write, "idempotentHint": True},
+        },
+        {
             "name": "reschedule_task",
             "title": "Reschedule a Work Diary task",
             "description": "Use this when the user has confirmed new start or end schedule fields for one task.",

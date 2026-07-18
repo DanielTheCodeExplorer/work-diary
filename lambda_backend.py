@@ -1510,7 +1510,7 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         allowed = {field: arguments.get(field, "") for field in ("title", "start_date", "start_time", "due_date", "due_time", "priority", "project", "notes")}
         result = mcp_idempotent(name, key, lambda: mcp_task_view(create_task({**allowed, "completed": False})))
         return mcp_tool_success({"task": result}, f"Created Work Diary task: {result['title']}")
-    if name in {"complete_task", "reschedule_task", "archive_task"}:
+    if name in {"complete_task", "reschedule_task", "archive_task", "restore_task"}:
         task_id = compact_text(arguments.get("task_id"))
         expected = compact_text(arguments.get("expected_updated_at"))
         key = compact_text(arguments.get("idempotency_key"))
@@ -1525,6 +1525,10 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
                 if current.get("archived"):
                     return mcp_task_view(current)
                 return mcp_task_view(update_task(task_id, {"archived": True}))
+            if name == "restore_task":
+                if not current.get("archived"):
+                    return mcp_task_view(current)
+                return mcp_task_view(update_task(task_id, {"archived": False}))
             if name == "complete_task":
                 return mcp_task_view(update_task(task_id, {"completed": True}))
             updates = {field: arguments[field] for field in ("start_date", "start_time", "due_date", "due_time") if field in arguments}
@@ -1533,7 +1537,7 @@ def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             return mcp_task_view(update_task(task_id, updates))
 
         result = mcp_idempotent(name, key, mutate_task)
-        action = {"complete_task": "Completed", "archive_task": "Archived"}.get(name, "Rescheduled")
+        action = {"complete_task": "Completed", "archive_task": "Archived", "restore_task": "Restored"}.get(name, "Rescheduled")
         return mcp_tool_success({"task": result}, f"{action} Work Diary task: {result['title']}")
     raise ValidationError("MCP tool is not supported.")
 

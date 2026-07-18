@@ -67,6 +67,11 @@ class McpIntegrationTests(unittest.TestCase):
         self.assertFalse(tools["archive_task"]["annotations"]["readOnlyHint"])
         self.assertFalse(tools["archive_task"]["annotations"]["destructiveHint"])
         self.assertTrue(tools["archive_task"]["annotations"]["idempotentHint"])
+        self.assertIn("restore_task", tools)
+        self.assertIn("expected_updated_at", tools["restore_task"]["inputSchema"]["required"])
+        self.assertFalse(tools["restore_task"]["annotations"]["readOnlyHint"])
+        self.assertFalse(tools["restore_task"]["annotations"]["destructiveHint"])
+        self.assertTrue(tools["restore_task"]["annotations"]["idempotentHint"])
         self.assertIn("archived", tools["list_tasks"]["inputSchema"]["properties"]["status"]["enum"])
 
         search_schema = tools["search"]["inputSchema"]

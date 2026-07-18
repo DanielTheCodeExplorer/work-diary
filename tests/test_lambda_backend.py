@@ -82,6 +82,35 @@ class LambdaBackendHelperTests(unittest.TestCase):
         self.assertTrue(result["structuredContent"]["task"]["archived"])
         self.assertFalse(result["structuredContent"]["task"]["completed"])
 
+    def test_mcp_restore_reverses_archive_without_changing_completion(self):
+        archived_task = {
+            "id": "task-2",
+            "title": "Changed my mind",
+            "completed": False,
+            "archived": True,
+            "archived_at": "2026-07-18T10:05:00Z",
+            "updated_at": "2026-07-18T10:05:00Z",
+        }
+        restored_task = {**archived_task, "archived": False, "archived_at": ""}
+        arguments = {
+            "task_id": "task-2",
+            "expected_updated_at": archived_task["updated_at"],
+            "idempotency_key": "restore-task-2",
+        }
+
+        with unittest.mock.patch.object(
+            lambda_backend, "mcp_idempotent", side_effect=lambda _name, _key, operation: operation()
+        ), unittest.mock.patch.object(
+            lambda_backend, "get_task", return_value=archived_task
+        ), unittest.mock.patch.object(
+            lambda_backend, "update_task", return_value=restored_task
+        ) as update_task:
+            result = lambda_backend.call_mcp_tool("restore_task", arguments)
+
+        update_task.assert_called_once_with("task-2", {"archived": False})
+        self.assertFalse(result["structuredContent"]["task"]["archived"])
+        self.assertFalse(result["structuredContent"]["task"]["completed"])
+
     def test_mcp_rejects_an_unauthorized_request_with_resource_metadata(self):
         event = {
             "requestContext": {"http": {"method": "POST"}},
